@@ -122,14 +122,16 @@
     website: "Company website."
 
 # The OWNER / seller anchor — a HubSpot user records can be assigned to. It's the
-# identity that scopes "whose contacts": resolved from a canonical :Person by email
-# (Person.email == owner.email), so it works for the connecting user ("my contacts")
-# AND any colleague who is an owner in the same HubSpot org ("Jasper's contacts").
-# A named person who is NOT an owner in the connected org simply resolves to nothing
-# — there is no credentialed path to a different tenant, so the query honestly empties.
+# identity that scopes "whose contacts": resolved by email — from `(me:AssistantUser)`
+# for the connecting user ("my contacts"), or from a named `(:Person)` for a colleague
+# who is an owner in the same HubSpot org ("Jasper's contacts"). A named person who is
+# NOT an owner in the connected org resolves to nothing — there is no credentialed path
+# to a different tenant, so the query honestly empties. NOTE: the host graph has NO
+# `(:AssistantUser)-[:HAS_PERSON]->(:Person)` edge, so "my contacts" MUST anchor on
+# `(me:AssistantUser)` directly (via the AssistantUser join below), not through a Person hop.
 #
-#   MATCH (me:AssistantUser)-[:HAS_PERSON]->(p:Person)-[:HAS_HUBSPOT_OWNER]->(o:HubSpotOwner)
-#   MATCH (o)-[:OWNS_CONTACT]->(c:HubSpotContact) RETURN c.email
+#   MATCH (me:AssistantUser)-[:HAS_HUBSPOT_OWNER]->(o:HubSpotOwner)-[:OWNS_CONTACT]->(c:HubSpotContact) RETURN c.email
+#   MATCH (p:Person {name:'…'})-[:HAS_HUBSPOT_OWNER]->(o:HubSpotOwner)-[:OWNS_CONTACT]->(c)  // a colleague's
 - name: HubSpotOwner
   visibility: internal
   userAnchor: false
@@ -147,6 +149,19 @@
         - existingBridge                                  # respect a fresh HubSpotOwner already linked
         - canonicalEmail: { producer: ownersByEmail }     # else resolve via the Person's email set
       description: "the CRM owner identity for a person (you, or a colleague who is an owner) — the anchor for owned-contact queries"
+    # THE CONNECTING USER is themselves an owner, resolved by their OWN email — so "MY contacts" anchors
+    # DIRECTLY on (me:AssistantUser), with no `(:Person)` hop (there is NO `(:AssistantUser)-[:HAS_PERSON]->
+    # (:Person)` edge in the host graph, so the old Person-only anchor left "my contacts" unreachable from me).
+    - anchorLabel: AssistantUser
+      relationship: HAS_HUBSPOT_OWNER
+      keyField: primaryEmail   # the connecting user's own email → their CRM owner identity
+      recordKeyField: email    # owner record's email (id-match against the user's canonical email)
+      producer: ownersByEmail
+      writeThrough: true
+      resolve:
+        - existingBridge
+        - canonicalEmail: { producer: ownersByEmail }
+      description: "the CRM owner identity for the CONNECTING USER (me) — anchor 'my contacts' here as (me:AssistantUser)-[:HAS_HUBSPOT_OWNER]->(:HubSpotOwner)-[:OWNS_CONTACT]->(:HubSpotContact)"
   properties:
     id:
       description: "Owner id (digits) — identity, and the key contacts filter by (hubspot_owner_id)."
