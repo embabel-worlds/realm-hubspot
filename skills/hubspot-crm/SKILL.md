@@ -1,6 +1,6 @@
 ---
 name: hubspot-crm
-description: HubSpot CRM workflows — finding/creating/updating contacts, companies, deals, and tickets; searching by property; listing owners; navigating pipelines and stages; and linking objects via associations. Activate this skill BEFORE making any HubSpot call when the user asks anything involving contacts, companies, deals, tickets, sales pipeline, account owners, or anything in HubSpot.
+description: HubSpot CRM — contacts, companies, deals, tickets, pipelines, owners, associations. Activate BEFORE any HubSpot call; it returns the namespaces and rules to follow.
 ---
 
 # HubSpot CRM Workflows
