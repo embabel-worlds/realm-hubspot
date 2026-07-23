@@ -2,7 +2,7 @@ name: hubspot
 description: "HubSpot CRM v3 — typed via a curated, vendored OpenAPI 3 spec covering the high-traffic CRM surface (contacts/companies/deals/tickets CRUD + search + owners + pipelines + associations). Virtual joins resolve contacts/companies on demand from canonical Person/Organization, plus an owner anchor (HubSpotOwner, resolved from a Person by email) so owner-scoped queries work for the connecting user AND colleagues (\"my contacts\", \"Jasper's contacts not emailed lately\"). Bundles a `hubspot-crm` Agent Skill that teaches the workflow patterns (search-then-update, properties as Map<String,String>, associations v4, pagination)."
 version: 0.4.0
 author: Rod Johnson
-url: https://github.com/johnsonr/pack-hubspot
+url: https://github.com/johnsonr/realm-hubspot
 tags:
   - integrations
   - crm
