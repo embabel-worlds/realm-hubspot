@@ -15,7 +15,7 @@ from GitHub). Object types are passed as a string: `"contacts" | "companies" | "
 The same endpoints work for engagements (`"notes"`, `"tasks"`, `"calls"`, `"emails"`, `"meetings"`)
 and custom object names.
 
-If a call returns `gateway.hubspot.foo is not a workspace tool`, the error lists every valid
+If a call returns `gateway.hubspot.foo is not a world tool`, the error lists every valid
 method — pick from it. Never re-send the same call.
 
 ## Cardinal rules

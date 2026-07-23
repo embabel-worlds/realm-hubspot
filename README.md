@@ -1,14 +1,14 @@
-# pack-hubspot
+# realm-hubspot
 
 HubSpot CRM v3 via a curated, vendored OpenAPI 3 spec — gives the LLM
 full request **and** response types for the high-traffic CRM surface
 without depending on HubSpot's now-defunct public spec catalog.
 
-> Pack authoring reference: see
-> [`docs/pack-format.md`](https://github.com/embabel/assistant/blob/main/docs/pack-format.md)
-> in the assistant repo for the full pack format spec — vendored
+> Realm authoring reference: see
+> [`docs/realm-format.md`](https://github.com/embabel/assistant/blob/main/docs/realm-format.md)
+> in the assistant repo for the full realm format spec — vendored
 > OpenAPI specs, OAuth2, identity introspection, admin OAuth app
-> registry, and per-workspace overrides are all documented there.
+> registry, and per-world overrides are all documented there.
 
 ## Why
 
@@ -18,7 +18,7 @@ of 2026 — HubSpot's docs site is now SPA-rendered with no spec download
 links, and apis.guru's `crm` mirror only contains the Cards extension.
 Community-maintained unified specs exist but drift.
 
-This pack vendors a hand-written mini-spec (`apis/hubspot-crm.json`)
+This realm vendors a hand-written mini-spec (`apis/hubspot-crm.json`)
 that covers ~12 ops parameterised by object type, handling 95% of
 chat-driven CRM workflows. Same data the LLM would read from a
 3,000-op upstream dump, in a tenth of the prompt.
@@ -59,7 +59,7 @@ registered the HubSpot app yet — show them the next section.
 
 ### For installation admins (one-time setup)
 
-Done once per installation. Every workspace in the installation
+Done once per installation. Every world in the installation
 inherits — end users just click Authorize.
 
 1. **Create a HubSpot Public App** at
@@ -78,8 +78,8 @@ inherits — end users just click Authorize.
    (or `http://localhost:8042/api/v1/auth/oauth2/callback` for local
    dev).
 4. **Copy** the app's client ID and client secret.
-5. **Add them to** `{workspaceBase}/admin/oauth-apps.yml` (the same
-   admin directory that holds `pack-sources.yml`, `themes/`, `hints/`,
+5. **Add them to** `{worldBase}/admin/oauth-apps.yml` (the same
+   admin directory that holds `realm-sources.yml`, `themes/`, `hints/`,
    etc.):
 
    ```yaml
@@ -89,12 +89,12 @@ inherits — end users just click Authorize.
        client-secret: secret-blah
    ```
 
-   Hot-reloaded — no restart needed. Every workspace in the
+   Hot-reloaded — no restart needed. Every world in the
    installation will see "Authorize" appear in Settings.
 
-A specific workspace can opt out of the installation default and
+A specific world can opt out of the installation default and
 point at its own HubSpot app by writing the same shape to
-`<workspace>/config/oauth-apps.yml` — useful if one team needs a
+`<world>/config/oauth-apps.yml` — useful if one team needs a
 different brand on the consent screen.
 
 Token refresh is automatic. End users can disconnect from the same
@@ -102,16 +102,16 @@ Settings panel any time.
 
 ### Webhook setup (one-time, operator only)
 
-The pack ships a `webhooks/contact-creation.yml` registration that
+The realm ships a `webhooks/contact-creation.yml` registration that
 declares signature verification + tenancy. **The actual subscription
 on HubSpot's side has to be created once per installation** (HubSpot
 exposes app-webhook configuration only via API, not the dev portal UI
 for newer Public Apps).
 
-A helper script does it. **Run it from the root of this pack** — wherever it lives on the operator's machine. For a pack installed into a workspace that's typically:
+A helper script does it. **Run it from the root of this realm** — wherever it lives on the operator's machine. For a realm installed into a world that's typically:
 
 ```bash
-cd ~/embabel/assistant/<your-username>/<your-workspace>/config/packs/pack-hubspot
+cd ~/embabel/assistant/<your-username>/<your-world>/config/realms/realm-hubspot
 git pull   # if it's been a while
 ```
 
@@ -134,7 +134,7 @@ Then:
 scripts/register-webhook.sh <public-base-url>
 ```
 
-The script reads `app-id` and `developer-key` from `oauth-apps.yml` (admin file by default; `<workspace>/config/oauth-apps.yml` as fallback).
+The script reads `app-id` and `developer-key` from `oauth-apps.yml` (admin file by default; `<world>/config/oauth-apps.yml` as fallback).
 
 **Override — long form.** Pass all three explicitly to register against a different app without editing YAML:
 
@@ -180,7 +180,42 @@ tenancy resolver routes each event to the right user via `portalId`.
 For non-default objects (line items, products, custom objects) the same
 endpoints apply — pass the object's API name as `objectType`.
 
-## What's NOT in this pack
+## Sample queries
+
+Run these in the Cypher console (Settings → Data → **Query**). The HubSpot nodes are
+virtual — each materializes on demand when a query traverses to it — so keep the virtual
+join in the leading `MATCH` chain and put `WHERE`/`ORDER BY`/`LIMIT` at the end. A concrete
+field (a lead status, a `notes_last_contacted` date) belongs in an ordinary `WHERE`; the
+`ai.*` primitives below are only for a subjective read no stored property captures.
+
+**Whose contacts (owner-scoped)**
+```cypher
+-- The contacts you own
+MATCH (me:AssistantUser)-[:HAS_HUBSPOT_OWNER]->(:HubSpotOwner)-[:OWNS_CONTACT]->(c:HubSpotContact)
+RETURN c.email, c.firstname, c.lastname, c.jobtitle
+```
+
+**LLM-judged (the `ai` namespace — filter or rank on a subjective read of a fetched contact)**
+
+The `ai` namespace is reserved for per-row LLM judgment over rows a virtual join has fetched,
+for a discriminator no stored property or embedding captures. `ai.relevant(...)` *filters* (keeping
+the contact); `ai.score(...)` *reranks*. A field like `hs_lead_status` or a date stays an
+ordinary `WHERE`.
+```cypher
+-- Of the contacts you own, the ones who read like senior decision-makers at sizeable companies
+MATCH (me:AssistantUser)-[:HAS_HUBSPOT_OWNER]->(:HubSpotOwner)-[:OWNS_CONTACT]->(c:HubSpotContact)
+WHERE ai.relevant(c, 'a senior decision-maker at a sizeable company — not a junior individual contributor or a one-person shop')
+RETURN c.email, c.firstname, c.lastname, c.jobtitle
+```
+```cypher
+-- Your five contacts most worth an outreach about a security-and-compliance product, skipping anyone contacted since spring
+MATCH (me:AssistantUser)-[:HAS_HUBSPOT_OWNER]->(:HubSpotOwner)-[:OWNS_CONTACT]->(c:HubSpotContact)
+WHERE c.notes_last_contacted < '2026-04-01'
+RETURN c.email, c.firstname, c.lastname, c.jobtitle
+ORDER BY ai.score(c, 'most likely to care about a security and compliance product — role, seniority and company all point that way') DESC LIMIT 5
+```
+
+## What's NOT in this realm
 
 To keep the spec small, these are out of scope:
 
@@ -199,4 +234,4 @@ To keep the spec small, these are out of scope:
 
 Spin up a free HubSpot developer test account at
 `app.hubspot.com/signup-hubspot/developers` — enables sample contacts,
-companies, and deals on first login. Good enough to verify the pack.
+companies, and deals on first login. Good enough to verify the realm.
