@@ -3,12 +3,15 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.HubSpotCompany = void 0;
 const runtime_types_1 = require("@embabel/runtime-types");
 /**
- * A HubSpot CRM company materialized on demand (see `types/hubspot.yml`), keyed
- * by `domain`. Pure verbs read its fields; `update` writes back, addressing the
- * company by `domain` via `idProperty` (no numeric-id lookup).
+ * A HubSpot CRM company materialized on demand (see `types/hubspot.yml`). Its graph
+ * identity is the HubSpot object id (`hs_object_id`), so it dedupes whether reached by
+ * domain (from an Organization) or by object id (from a contact's primary company).
+ * `update` still writes back addressing the company by `domain` via `idProperty` (a
+ * convenient natural key — no numeric-id lookup); it requires a usable domain.
  */
 class HubSpotCompany extends runtime_types_1.Entity {
-    // `id` (identity) is inherited from Entity and equals the domain.
+    // `id` (identity) is the HubSpot object id; `domain` is the natural key used for write-back.
+    hs_object_id;
     domain;
     name;
     industry;
