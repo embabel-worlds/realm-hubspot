@@ -4,6 +4,7 @@ version: 0.4.0
 author: Rod Johnson
 maturity: experimental
 url: https://github.com/johnsonr/realm-hubspot
+category: customers
 tags:
   - integrations
   - crm
