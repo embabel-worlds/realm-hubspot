@@ -110,7 +110,8 @@ def shift_text(text, shift, year):
             return m.group(0)
         full_name = name == full  # after a full month name a dot ends the sentence; it is no abbreviation
         month = MONTHS[d.month - 1] if full_name else MONTHS[d.month - 1][:3] + dot
-        trail = dot if full_name else ""
+        trail = dot if full_name and not m["name"] else ""  # "16 June." ends a sentence; "June. 16" keeps its dot
+        month += dot if full_name and m["name"] else ""
         sfx = "" if not suffix else "th" if 10 < d.day % 100 < 14 else {1: "st", 2: "nd", 3: "rd"}.get(d.day % 10, "th")
         when = f"{month} {d.day}{sfx}" if m["name"] else f"{d.day}{sfx} {month}"
         return (when if d.year == year else f"{when}, {d.year}" if m["name"] else f"{when} {d.year}") + trail
@@ -422,6 +423,7 @@ def self_check(book):
         "Tuesday 3 November or the 19th November; May we?"
     assert shift_text("by October 1 or 1st Oct.", dt.timedelta(weeks=20), 2026) == "by February 18, 2027 or 18th Feb. 2027"
     assert shift_text("on 16 June. Then", dt.timedelta(weeks=30), 2026) == "on 12 January 2027. Then"
+    assert shift_text("June. 16", dt.timedelta(weeks=20), 2026) == "November. 3"
     assert week_shift(dt.date(2026, 11, 17), dt.date(2026, 6, 27)) == dt.timedelta(days=140)
     assert week_shift(dt.date(2026, 11, 18), dt.date(2026, 6, 27)) == dt.timedelta(days=147)
     assert shift_text("presentation on June 30, call Mar. 3rd, due 2026-06-24; May we?", shift, 2026) == \
