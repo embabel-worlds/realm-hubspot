@@ -27,6 +27,7 @@ Before loading it deletes the sample records HubSpot plants in a new portal.
 import argparse
 import csv
 import datetime as dt
+import io
 import json
 import os
 import sys
@@ -74,8 +75,9 @@ def match(options, text):
 def ms(when, shift):
     """Epoch millis of a book date or datetime moved by `shift`. Book clocks are read as UTC; a bare
     date is placed at 12:00 UTC so it stays the same calendar day in the portal's US time zone."""
-    t = dt.datetime.fromisoformat(when if " " in when else when + " 12:00:00")
-    return str(int((t.replace(tzinfo=dt.timezone.utc) + shift).timestamp() * 1000))
+    t = dt.datetime.fromisoformat(when + " 12:00:00" if len(when) == 10 else when)
+    t = t.astimezone(dt.timezone.utc) if t.tzinfo else t.replace(tzinfo=dt.timezone.utc)
+    return str(int((t + shift).timestamp() * 1000))
 
 
 def plan(book, shift, owner, option, stage, ticket_stage):
@@ -130,6 +132,7 @@ def plan(book, shift, owner, option, stage, ticket_stage):
             link("notes", sid, c["account_key"], c["email"])
     for d in deals:
         pipeline, dealstage = stage(d["pipeline"], d["stage"])
+        gaps[f"deals.dealstage has no stage '{d['stage']}' in '{d['pipeline']}'"] += dealstage is None
         put("deals", d["source_id"], {
             "dealname": d["title"], "amount": d["amount"], "pipeline": pipeline, "dealstage": dealstage,
             "closedate": ms(d["close_on"], shift), "createdate": ms(d["created_on"], shift),
@@ -139,7 +142,7 @@ def plan(book, shift, owner, option, stage, ticket_stage):
     for t in cases:
         put("tickets", t["source_id"], {
             "subject": t["subject"], "content": t["body"], **ticket_stage(t["status"]),
-            "hs_ticket_priority": option("tickets", "hs_ticket_priority", t["priority"]),
+            "hs_ticket_priority": opt("tickets", "hs_ticket_priority", "" if t["priority"] == "none" else t["priority"]),
             "hs_ticket_category": opt("tickets", "hs_ticket_category", CATEGORY.get(t["kind"], t["kind"])),
             "createdate": ms(t["opened_on"], shift),
             "closed_date": t["closed_on"] and ms(t["closed_on"], shift)})
@@ -182,11 +185,11 @@ def plan(book, shift, owner, option, stage, ticket_stage):
     return rec, links, +gaps
 
 
-def last_contacted(rec, links):
-    """Per contact sid: the newest call, email or meeting timestamp HubSpot should roll up."""
+def last_contacted(rec, links, target):
+    """Per `target` sid (contacts or deals): the newest linked call, email or meeting timestamp HubSpot should roll up."""
     out = {}
     for obj, sid, to, cid in links:
-        if to == "contacts" and obj in ("calls", "emails", "meetings"):
+        if to == target and obj in ("calls", "emails", "meetings"):
             out[cid] = max(out.get(cid, "0"), rec[obj][sid]["hs_timestamp"], key=int)
     return out
 
@@ -199,7 +202,7 @@ class HubSpot:
     def __init__(self, token):
         self.token = token
 
-    def call(self, method, path, body=None, missing_ok=False):
+    def call(self, method, path, body=None, missing_ok=False, retry_5xx=True):
         for attempt in range(6):
             req = urllib.request.Request(API + path, method=method,
                                          data=None if body is None else json.dumps(body).encode(),
@@ -208,13 +211,18 @@ class HubSpot:
             try:
                 with urllib.request.urlopen(req) as r:
                     raw = r.read()
-                    return json.loads(raw) if raw else {}
+                    out = json.loads(raw) if raw else {}
+                    # Batch calls report per-item failures inside a 2xx (207, or 200 with numErrors).
+                    if isinstance(out, dict) and (out.get("errors") or out.get("numErrors")):
+                        raise SystemExit(f"HubSpot partly refused {method} {path}: {json.dumps(out.get('errors'))[:600]}")
+                    return out
             except urllib.error.HTTPError as e:
                 detail = e.read().decode(errors="replace")
                 if e.code == 404 and missing_ok:
                     return None
-                if e.code == 429 or e.code >= 500:
-                    time.sleep(int(e.headers.get("Retry-After") or 2 ** attempt))
+                if e.code == 429 or (e.code >= 500 and retry_5xx):
+                    after = e.headers.get("Retry-After") or ""
+                    time.sleep(int(after) if after.isdigit() else 2 ** attempt)
                     continue
                 raise SystemExit(f"HubSpot refused {method} {path}: {e.code} {detail[:600]}")
         raise SystemExit(f"HubSpot kept throttling {method} {path}")
@@ -278,7 +286,7 @@ class Portal:
     def create_pipeline(self, label):
         """A book pipeline the portal lacks, created with the stages of the portal's default pipeline."""
         base = next(p for p in self.deal_pipelines if p["id"] == "default")
-        self.hs.call("POST", "/crm/v3/pipelines/deals", {
+        self.hs.call("POST", "/crm/v3/pipelines/deals", retry_5xx=False, body={
             "label": label, "displayOrder": len(self.deal_pipelines),
             "stages": [{"label": s["label"], "displayOrder": s["displayOrder"],
                         "metadata": {"probability": s["metadata"]["probability"]}} for s in base["stages"]]})
@@ -316,15 +324,15 @@ def associate(hs, links, ids):
     return len(links)
 
 
-def poll(hs, ids, expected, limit=180):
-    """Wait until every contact's notes_last_contacted equals the newest call/email/meeting; returns misses."""
+def poll(hs, obj, ids, expected, limit=180):
+    """Wait until every `obj` record's notes_last_contacted equals the newest call/email/meeting; returns misses."""
     deadline, items = time.time() + limit, list(expected)
-    back = {v: k for k, v in ids["contacts"].items()}
+    back = {v: k for k, v in ids[obj].items()}
     while True:
         got = {}
         for i in range(0, len(items), 100):
-            r = hs.call("POST", "/crm/v3/objects/contacts/batch/read", {
-                "properties": ["notes_last_contacted"], "inputs": [{"id": ids["contacts"][s]} for s in items[i:i + 100]]})
+            r = hs.call("POST", f"/crm/v3/objects/{obj}/batch/read", {
+                "properties": ["notes_last_contacted"], "inputs": [{"id": ids[obj][s]} for s in items[i:i + 100]]})
             got.update({back[x["id"]]: x["properties"].get("notes_last_contacted") for x in r["results"]})
         misses = {s: (got.get(s), want) for s, want in expected.items()
                   if not got.get(s) or abs(int(dt.datetime.fromisoformat(got[s].replace("Z", "+00:00")).timestamp() * 1000) - int(want)) > 1000}
@@ -348,6 +356,7 @@ def self_check(book):
     want = dt.datetime.fromisoformat(first["sent_at"]).replace(tzinfo=dt.timezone.utc) + shift
     assert rec["emails"][first["source_id"]]["hs_timestamp"] == str(int(want.timestamp() * 1000))
     assert dt.datetime.fromtimestamp(int(ms("2026-06-27", shift)) / 1000, dt.timezone.utc).date() == dt.date(2026, 11, 17)
+    assert ms("2026-06-27T10:00:00", shift) == ms("2026-06-27 10:00:00", shift) == ms("2026-06-27T12:00:00+02:00", shift)
     assert all(sid in rec[o] and tid in rec[t] for o, sid, t, tid in links)
     assert all(p[MARK] == sid for o in OBJECTS for sid, p in rec[o].items())
     assert not gaps, gaps
@@ -356,7 +365,21 @@ def self_check(book):
     assert match([("Biotechnology", "B"), ("Information Technology", "IT")], "Technology") == "IT"
     assert match([("Import and Export", "IE")], "Import/Export") == "IE"
     assert match([("Civil Engineering", "C"), ("Mechanical Engineering", "M")], "Engineering") is None
-    assert last_contacted(rec, links), "no contact has a call, email or meeting"
+    assert last_contacted(rec, links, "contacts") and last_contacted(rec, links, "deals"), "nothing to roll up"
+    _, _, bad = plan(book, shift, owner=lambda n: "1", option=lambda o, p, t: t,
+                     stage=lambda p, s: (p, None), ticket_stage=lambda s: {})
+    assert any(g.startswith("deals.dealstage") for g in bad), "an unmatched deal stage went unreported"
+
+    class PartlyRefused(io.BytesIO):  # a batch answer: HTTP 2xx carrying per-item errors
+        pass
+    real, urllib.request.urlopen = urllib.request.urlopen, lambda req: PartlyRefused(b'{"numErrors": 1, "errors": [{"message": "no"}]}')
+    try:
+        HubSpot("offline").call("POST", "/crm/v3/objects/tickets/batch/upsert", {})
+        raise AssertionError("a 2xx with per-item errors passed as success")
+    except SystemExit:
+        pass
+    finally:
+        urllib.request.urlopen = real
     summary(rec, links, gaps)
     print("self-check ok")
 
@@ -382,11 +405,15 @@ def main():
     seeded = {o: [r["id"] for r in hs.search(o, [{"propertyName": MARK, "operator": "HAS_PROPERTY"}])]
               for o in OBJECTS if hs.call("GET", f"/crm/v3/properties/{o}/{MARK}", missing_ok=True)}
     if args.remove:
+        if args.manifest.exists():  # search is not read-your-writes; the manifest catches rows written moments ago
+            for o, m in json.loads(args.manifest.read_text())["ids"].items():
+                seeded[o] = sorted(set(seeded.get(o, [])) | set(m.values()))
         print("would remove" if not args.yes else "removing", ", ".join(f"{len(v)} {o}" for o, v in seeded.items()) or "nothing")
         if args.yes:
             for o, v in seeded.items():
                 hs.archive(o, v)
-        return
+        return print("left in place: the book_source_id and book_industry properties, any pipeline the load created,\n"
+                     "  and the owners; HubSpot's deleted sample records stay in its recycle bin.")
     samples = {o: [r["id"] for r in hs.search(o, [{"propertyName": "hs_object_source_id", "operator": "EQ", "value": "sample-contact"}])]
                for o in OBJECTS}
     shift = dt.timedelta(days=(args.today - book_as_of(args.book)).days)
@@ -404,8 +431,7 @@ def main():
         print("not carried: contact/company created-on (HubSpot stamps its own), deal probability (from the stage),\n"
               "  task completed-on, meeting booked-on, ticket labels/engineers/milestone/reply count.")
         return print("plan only; re-run with --yes to write")
-    for o, v in samples.items():
-        hs.archive(o, v)
+    # Configuration first: if the key lacks a schema scope, nothing has been deleted yet.
     for o in OBJECTS:
         ensure_property(hs, o, MARK, "Book source id", "Row id in the sample business book this record was loaded from.", unique=True)
     # HubSpot's industry list is fixed and misses much of the book's wording, so the book's own word rides along.
@@ -415,19 +441,25 @@ def main():
     ctx.read_pipelines()
     rec, links, gaps = plan(args.book, shift, ctx.owners.get, ctx.option, ctx.stage, ctx.ticket_stage)
     summary(rec, links, gaps)
+    unloadable = [g for g in gaps if g.startswith(("owner", "deals.dealstage"))]
+    unloadable and sys.exit(f"refusing to load with unmapped owners or stages: {unloadable}")
+    for o, v in samples.items():
+        hs.archive(o, v)
     ids = {o: upsert(hs, o, rec[o]) for o in OBJECTS}
     missing = {o: len(rec[o]) - len(ids[o]) for o in OBJECTS if len(rec[o]) != len(ids[o])}
     missing and sys.exit(f"upsert left records unaccounted for: {missing}")
     n = associate(hs, links, ids)
-    expected = last_contacted(rec, links)
+    expected = {o: last_contacted(rec, links, o) for o in ("contacts", "deals")}
     args.manifest.write_text(json.dumps({
         "portal": portal_id, "today": args.today.isoformat(), "as_of": book_as_of(args.book).isoformat(),
         "shift_days": shift.days, "ids": ids, "notes_last_contacted": expected}, indent=1, sort_keys=True))
     print(f"loaded; {n} associations; manifest {args.manifest}; waiting for HubSpot's rollups…")
-    misses = poll(hs, ids, expected)
-    print(f"notes_last_contacted settled on all {len(expected)} contacts" if not misses else
-          f"notes_last_contacted differs on {len(misses)} of {len(expected)} contacts, e.g. "
-          + "; ".join(f"{s}: got {g} want {w}" for s, (g, w) in list(misses.items())[:5]))
+    for o, want in expected.items():
+        misses = poll(hs, o, ids, want)
+        if misses:
+            sys.exit(f"{o} notes_last_contacted differs on {len(misses)} of {len(want)}, e.g. "
+                     + "; ".join(f"{s}: got {g} want {w}" for s, (g, w) in list(misses.items())[:5]))
+        print(f"{o} notes_last_contacted settled on all {len(want)}")
 
 
 if __name__ == "__main__":
