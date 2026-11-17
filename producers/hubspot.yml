@@ -11,10 +11,15 @@
 #
 # Every search walks HubSpot's cursor (`after` → `paging.next.after`) 100 records a page, so an
 # owner with more than one page of records is read whole rather than cut at HubSpot's default 10.
+#
+# HubSpot allows five search calls a second per portal, so every search producer shares one
+# `hubspot-search` bucket paced at four a second; a traversal over 40 contacts waits rather than
+# being refused with a 429.
 
 - name: contactsByEmail
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   args:
@@ -31,6 +36,7 @@
 - name: contactsByOwner
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   args:
@@ -47,6 +53,7 @@
 - name: contactsByCompany
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   args:
@@ -63,6 +70,7 @@
 - name: companiesByDomain
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   args:
@@ -79,6 +87,7 @@
 - name: companiesById
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   args:
@@ -94,6 +103,7 @@
 - name: companiesAll
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyTemplate: ""   # unkeyed: the whole collection; the book scope is only echoed
   echoKeyAs: scopeKey
@@ -124,6 +134,7 @@
 - name: dealsByOwner
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   args:
@@ -139,6 +150,7 @@
 - name: dealsByCompany
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   args:
@@ -154,6 +166,7 @@
 - name: dealsByContact
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   echoKeyAs: contactKey
@@ -170,6 +183,7 @@
 - name: dealsAll
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyTemplate: ""   # unkeyed: the whole collection; the book scope is only echoed
   echoKeyAs: scopeKey
@@ -183,6 +197,7 @@
 - name: ticketsByCompany
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   args:
@@ -198,6 +213,7 @@
 - name: ticketsByOwner
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   args:
@@ -213,6 +229,7 @@
 - name: ticketsByContact
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   echoKeyAs: contactKey
@@ -231,6 +248,7 @@
 - name: callsByOwner
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   args:
@@ -246,6 +264,7 @@
 - name: callsByContact
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   echoKeyAs: contactKey
@@ -262,6 +281,7 @@
 - name: callsByCompany
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   echoKeyAs: companyKey
@@ -278,6 +298,7 @@
 - name: callsByDeal
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   echoKeyAs: dealKey
@@ -294,6 +315,7 @@
 - name: emailsByOwner
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   args:
@@ -309,6 +331,7 @@
 - name: emailsByContact
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   echoKeyAs: contactKey
@@ -325,6 +348,7 @@
 - name: emailsByCompany
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   echoKeyAs: companyKey
@@ -341,6 +365,7 @@
 - name: emailsByDeal
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   echoKeyAs: dealKey
@@ -357,6 +382,7 @@
 - name: meetingsByOwner
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   args:
@@ -372,6 +398,7 @@
 - name: meetingsByContact
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   echoKeyAs: contactKey
@@ -388,6 +415,7 @@
 - name: meetingsByCompany
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   echoKeyAs: companyKey
@@ -404,6 +432,7 @@
 - name: meetingsByDeal
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   echoKeyAs: dealKey
@@ -420,6 +449,7 @@
 - name: notesByOwner
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   args:
@@ -435,6 +465,7 @@
 - name: notesByContact
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   echoKeyAs: contactKey
@@ -451,6 +482,7 @@
 - name: notesByCompany
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   echoKeyAs: companyKey
@@ -467,6 +499,7 @@
 - name: notesByDeal
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   echoKeyAs: dealKey
@@ -483,6 +516,7 @@
 - name: tasksByOwner
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   args:
@@ -498,6 +532,7 @@
 - name: tasksByContact
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   echoKeyAs: contactKey
@@ -514,6 +549,7 @@
 - name: tasksByCompany
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   echoKeyAs: companyKey
@@ -530,6 +566,7 @@
 - name: tasksByDeal
   kind: api
   operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
   records: "$.results[*].properties"
   keyArg: "filterGroups.0.filters.0.values"
   echoKeyAs: dealKey

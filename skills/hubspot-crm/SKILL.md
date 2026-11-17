@@ -34,18 +34,35 @@ const stalled = (deal) => !last(deal) || dayOf(last(deal)) <= daysBefore(45);
 
 Compare a timestamp's date (its first 10 characters) with a cut-off, or a timestamp exceeds its
 own day's cut-off. In the queries below, `<today>` stands for today's date as `YYYY-MM-DD` and
-`<today-45d>` for the date 45 days before it.
+`<today-45d>` or `<today-30d>` for the date that many days before it.
 
 ## Through the knowledge graph
 
 Every HubSpot record type is virtual: a Cypher query that traverses to it fetches it live.
+A bare `MATCH (o:HubSpotOwner)` matches nothing, so it never means "no such owner".
+
+**A colleague by name** ("Dana's deals", "Jenna's contacts"): look the owner up with `ownersList`,
+then pin their id in the query. `Person -[:HAS_HUBSPOT_OWNER]->` reaches an owner only when that
+person's email is the owner's login email.
+
+```javascript
+const owners = (await gateway.hubspot.ownersList({ limit: 100 })).results;
+const dana = owners.find(o => `${o.firstName} ${o.lastName}`.toLowerCase().includes("dana"));
+console.log(dana.id);   // use it as <ownerId> below
+```
 
 ```cypher
 // Dana's stalled deals: open, nobody reached in 45 days
-MATCH (p:Person) WHERE toLower(p.name) CONTAINS 'dana'
-MATCH (p)-[:HAS_HUBSPOT_OWNER]->(:HubSpotOwner)-[:OWNS_DEAL]->(d:HubSpotDeal)
+MATCH (:HubSpotOwner {id:'<ownerId>'})-[:OWNS_DEAL]->(d:HubSpotDeal)
 WHERE d.hs_is_closed = 'false' AND substring(d.notes_last_contacted, 0, 10) <= '<today-45d>'
 RETURN d.dealname, d.dealstage, d.closedate, d.notes_last_contacted
+
+// Dana's contacts we haven't emailed in 30 days: one query, never a loop of calls per contact
+MATCH (:HubSpotOwner {id:'<ownerId>'})-[:OWNS_CONTACT]->(c:HubSpotContact)
+OPTIONAL MATCH (c)-[:HAS_ACTIVITY]->(e:HubSpotEmail) WHERE e.hs_email_direction = 'EMAIL'
+WITH c, max(e.hs_timestamp) AS lastSent
+WHERE lastSent IS NULL OR substring(lastSent, 0, 10) < '<today-30d>'
+RETURN c.firstname, c.lastname, lastSent
 
 // My past-due follow-ups
 MATCH (me:AssistantUser)-[:HAS_HUBSPOT_OWNER]->(:HubSpotOwner)-[:OWNS_ACTIVITY]->(t:HubSpotTask)
