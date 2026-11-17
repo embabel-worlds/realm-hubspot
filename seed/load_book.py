@@ -95,8 +95,9 @@ TEXT = {"hs_email_subject", "hs_email_text", "hs_call_title", "hs_call_body", "h
 
 def shift_text(text, shift, year):
     """Move dates written inside a text by `shift`, as the structured dates move, keeping each one's spelling style.
-    shortcut: a month-day without a year is read in the book's year. Weekday words stay right because the shift is
-    whole weeks (week_shift); day-only references ("the 11th") are not moved, so the book must not use them."""
+    A month-day without a year is read in the book's year and gains its year once the shift moves it past that year.
+    Weekday words stay right because the shift is whole weeks (week_shift); day-only references ("the 11th") are not
+    moved, so the book must not use them."""
     def move(m):
         if m["iso"]:
             return (dt.date.fromisoformat(m["iso"]) + shift).isoformat()
@@ -109,7 +110,8 @@ def shift_text(text, shift, year):
             return m.group(0)
         month = (MONTHS[d.month - 1] if name == full else MONTHS[d.month - 1][:3]) + dot
         sfx = "" if not suffix else "th" if 10 < d.day % 100 < 14 else {1: "st", 2: "nd", 3: "rd"}.get(d.day % 10, "th")
-        return f"{month} {d.day}{sfx}" if m["name"] else f"{d.day}{sfx} {month}"
+        when = f"{month} {d.day}{sfx}" if m["name"] else f"{d.day}{sfx} {month}"
+        return when if d.year == year else f"{when}, {d.year}" if m["name"] else f"{when} {d.year}"
     return DATES.sub(move, text) if isinstance(text, str) else text
 
 
@@ -169,7 +171,7 @@ def plan(book, shift, owner, option, stage, ticket_stage):
         if c["note"]:  # HubSpot contacts have no description; the book's note becomes a note on them
             sid = "contact:" + c["source_id"]
             put("notes", sid, {"hs_note_body": c["note"],
-                               "hs_timestamp": ms(c["last_activity_on"] or c["created_on"], shift)}, c["owner"])
+                               "hs_timestamp": ms(c["note_on"], shift)}, c["owner"])
             link("notes", sid, c["account_key"], c["email"])
     for d in deals:
         pipeline, dealstage = stage(d["pipeline"], d["stage"])
@@ -416,6 +418,7 @@ def self_check(book):
     assert all(sid in rec[o] and tid in rec[t] for o, sid, t, tid in links)
     assert shift_text("Tuesday 16 June or the 2nd July; May we?", dt.timedelta(weeks=20), 2026) == \
         "Tuesday 3 November or the 19th November; May we?"
+    assert shift_text("by October 1 or 1st Oct.", dt.timedelta(weeks=20), 2026) == "by February 18, 2027 or 18th Feb. 2027"
     assert week_shift(dt.date(2026, 11, 17), dt.date(2026, 6, 27)) == dt.timedelta(days=140)
     assert week_shift(dt.date(2026, 11, 18), dt.date(2026, 6, 27)) == dt.timedelta(days=147)
     assert shift_text("presentation on June 30, call Mar. 3rd, due 2026-06-24; May we?", shift, 2026) == \
