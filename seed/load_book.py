@@ -187,7 +187,7 @@ def plan(book, shift, owner, option, stage, ticket_stage):
 
 
 def last_contacted(rec, links, target):
-    """Per `target` sid (contacts or deals): the newest linked call, email or meeting timestamp HubSpot should roll up."""
+    """Per `target` sid (contacts, companies or deals): the newest linked call, email or meeting timestamp HubSpot should roll up."""
     out = {}
     for obj, sid, to, cid in links:
         if to == target and obj in ("calls", "emails", "meetings"):
@@ -468,7 +468,7 @@ def main():
     missing = {o: len(rec[o]) - len(ids[o]) for o in OBJECTS if len(rec[o]) != len(ids[o])}
     missing and sys.exit(f"upsert left records unaccounted for: {missing}")
     n = associate(hs, links, ids)
-    expected = {o: last_contacted(rec, links, o) for o in ("contacts", "deals")}
+    expected = {o: last_contacted(rec, links, o) for o in ("contacts", "companies", "deals")}
     args.manifest.write_text(json.dumps({
         "portal": portal_id, "today": args.today.isoformat(), "as_of": book_as_of(args.book).isoformat(),
         "shift_days": shift.days, "ids": ids, "notes_last_contacted": expected}, indent=1, sort_keys=True))
