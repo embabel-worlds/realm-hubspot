@@ -7,30 +7,43 @@
     subscriptionType: "Webhook subscription type — always 'contact.creation' for this event"
     changeSource: "How the contact was created (CRM, FORM, IMPORT, INTEGRATION, …)"
 
-# On-demand virtual node (NOT eagerly mirrored). A HubSpot contact is fetched
-# only when a Cypher query traverses to it from a canonical :Person, materialized
-# transiently for that query, then rolled back. See specs/VIRTUAL_CYPHER.md.
+# Every type below is VIRTUAL: fetched on demand when a Cypher query traverses to it, materialized
+# for that query, then rolled back. Nothing is mirrored. Producers are in producers/hubspot.yml.
 #
-#   MATCH (p:Person {email:'x@y.com'})-[:HAS_HUBSPOT_CONTACT]->(hc:HubSpotContact)
-#   RETURN hc.jobtitle, hc.phone
+# Three of them are children of realm-business-vocabulary's parent types, which must be installed
+# beside this realm: HubSpotDeal is an Opportunity, HubSpotCompany a CrmAccount, HubSpotContact an
+# AccountContact. The company's domain keys the vocabulary's CustomerAccount spine (`hub:` below).
 #
-# Linking: id-match on the shared `email` (Person.email == contact.email). The
-# fetch is batched by the `contactsByEmail` producer (one search, emails IN […]),
-# so there is no N+1. Contact fields are read by traversal, not projected onto
-# Person — the deliberate shift from the old population/mirror model.
+#   MATCH (me:AssistantUser)-[:HAS_HUBSPOT_OWNER]->(o:HubSpotOwner)-[:OWNS_DEAL]->(d:HubSpotDeal)
+#   WHERE d.hs_is_closed = 'false' RETURN d.dealname, d.dealstage, d.closedate, d.notes_last_contacted
+
+# The whole portal, pinned by the LITERAL scope 'all'. It is not stored and does not need to exist.
+# It is the door for questions about every company or every deal; a bare `MATCH (k:CrmAccount)` or
+# `MATCH (o:Opportunity)` takes it (implicitDoor), as realm-odoo's book does.
+- name: HubSpotBook
+  visibility: internal
+  description: >-
+    The whole HubSpot portal, pinned by the literal scope 'all' — write
+    MATCH (b:HubSpotBook {scope:'all'}) and traverse HAS_COMPANY or HAS_DEAL. The door for
+    questions about every company or every deal. It is not stored and does not need to exist.
+  properties:
+    scope: { metadata: { identity: "true", default: "all" } }
+
+# Linking: id-match on the shared `email` (Person.primaryEmail == contact.email), batched by the
+# `contactsByEmail` producer (one search, emails IN […]). Contact fields are read by traversal, not
+# projected onto Person.
 - name: HubSpotContact
-  parents: [Contact]
+  parents: [Contact, AccountContact]
   visibility: internal
   userAnchor: false
   description: "A HubSpot CRM contact, fetched on demand and linked to a canonical Person by email."
-  # Two ways in:
+  # Ways in:
   #  1. from a canonical Person, by email (read a known person's contact details);
-  #  2. from a HubSpotOwner, by owner id — "the contacts this owner owns", which is
-  #     how "my contacts" and "Jasper's contacts" resolve (anchor → owner → contacts).
-  #     "not emailed lately" then filters the recency fields below.
+  #  2. from a HubSpotOwner, by owner id — "the contacts this owner owns", which is how
+  #     "my contacts" and "Jasper's contacts" resolve (anchor → owner → contacts);
+  #  3. from a HubSpotCompany, by the contact's primary company.
   #
-  #   MATCH (p:Person) WHERE toLower(p.name) CONTAINS 'jasper'
-  #   MATCH (p)-[:HAS_HUBSPOT_OWNER]->(o:HubSpotOwner)-[:OWNS_CONTACT]->(c:HubSpotContact)
+  #   MATCH (me:AssistantUser)-[:HAS_HUBSPOT_OWNER]->(o:HubSpotOwner)-[:OWNS_CONTACT]->(c:HubSpotContact)
   #   WHERE c.notes_last_contacted < '2026-05-01' RETURN c.email, c.notes_last_contacted
   virtualJoins:
     - anchorLabel: Person
@@ -46,29 +59,28 @@
       recordKeyField: hubspot_owner_id # contact record's owner id (id-match)
       producer: contactsByOwner
       description: "the contacts a CRM owner OWNS; for \"my contacts\" anchor the owner on (me:AssistantUser)-[:HAS_HUBSPOT_OWNER]->(:HubSpotOwner)"
+    - anchorLabel: HubSpotCompany
+      relationship: HAS_CONTACT
+      keyField: hs_object_id
+      recordKeyField: associatedcompanyid
+      producer: contactsByCompany
+      description: "the contacts whose PRIMARY company is this company"
   properties:
     email:
       description: "Primary email — identity of the contact and the id-match key to Person."
       metadata:
         identity: "true"
-        # Opt IN to canonicalization: project contact records onto the canonical Person spine by email
-        # (and, via the `company` WORKS_FOR below, onto Organization). Required now that `identity: true`
-        # alone is node-identity only — without this hub the contact would never enrich a Person. The
-        # Person hub matches against the person's FULL email set (primaryEmail + emails[]), so a contact
-        # whose email is any one of the person's addresses still resolves to the one Person.
+        # Opt IN to canonicalization onto the Person spine by email. The Person hub matches the
+        # person's FULL email set, so any one of the person's addresses resolves to the one Person.
         hub: Person
+    hs_object_id: "HubSpot object id of the contact — the key its deals, tickets and activities are found by."
     firstname: "Given name. HubSpot stores names as firstname/lastname — there is NO single `name` field; build a display name as `firstname + ' ' + lastname`."
     lastname: "Family name. See firstname."
     jobtitle: "Job title."
     company:
       description: "The contact's free-text `company` PROPERTY — frequently empty. A contact's PRIMARY COMPANY is usually a HubSpot ASSOCIATION (see associatedcompanyid), NOT this property, so this is often null even when a company is shown on the contact in HubSpot."
-      # Canonicalize the contact onto a commercial :Organization. The MERGE KEY is the contact's email
-      # DOMAIN (derived from `email` above), NOT this free text — so two contacts on the same corporate
-      # domain converge on ONE Organization regardless of how they spelled the company. This text only
-      # supplies the display NAME. A freemail/no-domain contact yields no Organization (by design — name
-      # alone never invents one). Result: `(c:HubSpotContact)-[:WORKS_FOR]->(o:Organization)`, so
-      # "my contacts' companies" / "contacts at (acme:Organization {name:'Acme'})" resolve to the shared
-      # canonical spine without a HubSpot-specific company walk.
+      # Canonicalize the contact onto a commercial :Organization keyed by the contact's email DOMAIN;
+      # this text only supplies the display NAME. A freemail contact yields no Organization.
       metadata:
         relationship: WORKS_FOR
         target: Organization
@@ -79,24 +91,23 @@
       cardinality: LIST
     hs_lead_status: "Lead status (e.g. NEW, OPEN, IN_PROGRESS, OPEN_DEAL, CONNECTED, UNQUALIFIED). Often null when unset."
     createdate: "ISO-8601 timestamp the contact was created in HubSpot (the CRM 'Create Date'). Compare lexically for 'created since X'."
-    notes_last_activity_date: "ISO-8601 timestamp of the contact's last activity of ANY kind (email, call, meeting, note, task). Broader than notes_last_contacted / hs_last_sales_activity_timestamp. Compare lexically for 'no activity since X'."
+    notes_last_activity_date: "ISO-8601 timestamp of the contact's last activity of ANY kind (email, call, meeting, note, task). Compare lexically for 'no activity since X'."
     hubspot_owner_id: "Owner id (digits) — id-match key to HubSpotOwner; who in the CRM owns this contact."
-    notes_last_contacted: "ISO-8601 timestamp of the last logged contact (email/call/meeting). Compare lexically for 'not contacted since X'."
+    notes_last_contacted: "ISO-8601 timestamp of the last time WE reached the contact: a sent email, a call or a meeting logged. An email the contact sent us does NOT move it. This is what 'last contacted' and 'gone quiet' mean. Compare lexically for 'not contacted since X'."
+    notes_next_activity_date: "ISO-8601 timestamp of the next UPCOMING activity scheduled with the contact. Empty when nothing is scheduled ahead — an overdue task does not show here; read the tasks instead."
     hs_last_sales_activity_timestamp: "ISO-8601 timestamp of the last sales activity on the contact."
 
-# The ORGANIZATION analog — fetched on demand and reached two ways, both converging
-# (NORMALIZED) onto one node by the HubSpot object id (`hs_object_id`):
-#   1. from a canonical :Organization by DOMAIN (id-match Organization.domain == company.domain);
-#   2. from a :HubSpotContact by its PRIMARY-company association id (associatedcompanyid == hs_object_id) —
-#      this is how a contact gets its company NAME, since the contact's `company` text property is
-#      usually empty (the primary company is an association, not that property).
-# Identity is `hs_object_id` (always present, stable) — NOT `domain`, so a company with no web domain
-# still materializes and still dedupes. The same company reached from many contacts (and the canonical
-# Organization) is ONE node with many incoming edges.
+# Reached three ways, all deduped onto one node by the HubSpot object id (`hs_object_id`):
+#   1. from a canonical :Organization by DOMAIN;
+#   2. from a :HubSpotContact by its PRIMARY-company association id;
+#   3. from the vocabulary's :CustomerAccount by its domain (TRACKED_AS), and from the book.
+# The company's `domain` keys the CustomerAccount spine, so the CRM's record of an account and
+# other systems' records of the same company meet on one account node.
 - name: HubSpotCompany
+  parents: [CrmAccount]
   visibility: internal
   userAnchor: false
-  description: "A HubSpot CRM company, fetched on demand. Reached from a canonical Organization by domain, and from a HubSpotContact by its primary-company association — both deduped onto one node by HubSpot object id."
+  description: "A HubSpot CRM company, fetched on demand: the CRM's record of a customer account. Reached from a canonical Organization or CustomerAccount by domain, from a HubSpotContact by its primary company, and from the book — deduped onto one node by HubSpot object id."
   virtualJoins:
     - anchorLabel: Organization
       relationship: HAS_HUBSPOT_COMPANY
@@ -110,48 +121,55 @@
       recordKeyField: hs_object_id          # company object id (id-match) — gives the company NAME for a contact
       producer: companiesById
       description: "the contact's PRIMARY associated company — use this for a contact's company NAME (co.name), since HubSpotContact.company is usually empty"
+    # implicitDoor: a bare `MATCH (k:CrmAccount)` or `MATCH (co:HubSpotCompany)` takes THIS door.
+    - { anchorLabel: HubSpotBook, relationship: HAS_COMPANY, keyField: scope,
+        recordKeyField: scopeKey, producer: companiesAll, maxFanoutTotal: 10000, implicitDoor: true,
+        description: "Every company in the portal." }
+    # The vocabulary's own edge, from the vocabulary's own anchor. recordKeyField is the record's
+    # `domain`, read through the spine, so the account's normalized key matches it.
+    # ridesHub: a query that already swept the book's companies answers this edge from them by
+    # domain instead of one fetch per account. HAS_COMPANY sweeps every company, so the ride is complete.
+    - { anchorLabel: CustomerAccount, relationship: TRACKED_AS, keyField: accountKey,
+        recordKeyField: domain, producer: companiesByDomain, ridesHub: true,
+        description: "HubSpot's record of a customer account, matched on the company's domain." }
   properties:
     hs_object_id:
-      description: "HubSpot object id — identity of the company; the id a contact's associatedcompanyid points at."
+      description: "HubSpot object id — identity of the company; the id a contact's associatedcompanyid, a deal's hs_primary_associated_company and a ticket's hs_primary_company_id point at."
       metadata:
         identity: "true"
     domain:
-      description: "Primary web domain — the id-match key to a canonical Organization. May be empty for companies with no web domain."
-    name: "Company name."
-    industry: "Industry."
+      hub: CustomerAccount
+      description: "Primary web domain — the key to the CustomerAccount spine and the id-match key to a canonical Organization. May be empty for companies with no web domain, which then key no account."
+      metadata: { canonical: website }
+    name: { description: "Company name.", metadata: { canonical: name } }
+    industry: { description: "Industry, in HubSpot's own words.", metadata: { canonical: industry } }
     website: "Company website."
+    hubspot_owner_id: "Owner id (digits) of the company's owner."
+    notes_last_contacted: "ISO-8601 timestamp of the last time WE reached anyone at the company (sent email, call, meeting). Inbound email does not move it."
+    scopeKey: "Echo of the book scope this company was fetched under."
 
-# The OWNER / seller anchor — a HubSpot user records can be assigned to. It's the
-# identity that scopes "whose contacts": resolved by email — from `(me:AssistantUser)`
-# for the connecting user ("my contacts"), or from a named `(:Person)` for a colleague
-# who is an owner in the same HubSpot org ("Jasper's contacts"). A named person who is
-# NOT an owner in the connected org resolves to nothing — there is no credentialed path
-# to a different tenant, so the query honestly empties. NOTE: the host graph has NO
-# `(:AssistantUser)-[:HAS_PERSON]->(:Person)` edge, so "my contacts" MUST anchor on
-# `(me:AssistantUser)` directly (via the AssistantUser join below), not through a Person hop.
+# The OWNER / seller anchor — a HubSpot user records can be assigned to, resolved by email from
+# `(me:AssistantUser)` ("my deals") or a named `(:Person)` ("Jasper's deals"). A person who is NOT an
+# owner in the connected portal resolves to nothing. NOTE: there is NO
+# `(:AssistantUser)-[:HAS_PERSON]->(:Person)` edge, so "my …" MUST anchor on `(me:AssistantUser)`.
 #
 #   MATCH (me:AssistantUser)-[:HAS_HUBSPOT_OWNER]->(o:HubSpotOwner)-[:OWNS_CONTACT]->(c:HubSpotContact) RETURN c.email
-#   MATCH (p:Person {name:'…'})-[:HAS_HUBSPOT_OWNER]->(o:HubSpotOwner)-[:OWNS_CONTACT]->(c)  // a colleague's
+#   MATCH (p:Person {name:'…'})-[:HAS_HUBSPOT_OWNER]->(o:HubSpotOwner)-[:OWNS_DEAL]->(d)  // a colleague's
 - name: HubSpotOwner
   visibility: internal
   userAnchor: false
-  description: "A HubSpot owner (CRM user/seller), resolved from a Person by email; the anchor for owner-scoped contact queries."
+  description: "A HubSpot owner (CRM user/seller), resolved from a Person by email; the anchor for owner-scoped contact, deal, ticket and activity queries."
   virtualJoins:
     - anchorLabel: Person
       relationship: HAS_HUBSPOT_OWNER
       keyField: primaryEmail   # anchor key for the pre-pass probe; the resolve chain owns the rest
       recordKeyField: email    # owner record's email (id-match against the Person's canonical email)
       producer: ownersByEmail
-      # Write-through identity bridge, resolved LAZILY for ANY person the query names (you OR a
-      # colleague), persisted + reused. The chain is tried in order, first match wins:
       writeThrough: true
       resolve:
         - existingBridge                                  # respect a fresh HubSpotOwner already linked
         - canonicalEmail: { producer: ownersByEmail }     # else resolve via the Person's email set
-      description: "the CRM owner identity for a person (you, or a colleague who is an owner) — the anchor for owned-contact queries"
-    # THE CONNECTING USER is themselves an owner, resolved by their OWN email — so "MY contacts" anchors
-    # DIRECTLY on (me:AssistantUser), with no `(:Person)` hop (there is NO `(:AssistantUser)-[:HAS_PERSON]->
-    # (:Person)` edge in the host graph, so the old Person-only anchor left "my contacts" unreachable from me).
+      description: "the CRM owner identity for a person (you, or a colleague who is an owner) — the anchor for owned-record queries"
     - anchorLabel: AssistantUser
       relationship: HAS_HUBSPOT_OWNER
       keyField: primaryEmail   # the connecting user's own email → their CRM owner identity
@@ -161,13 +179,187 @@
       resolve:
         - existingBridge
         - canonicalEmail: { producer: ownersByEmail }
-      description: "the CRM owner identity for the CONNECTING USER (me) — anchor 'my contacts' here as (me:AssistantUser)-[:HAS_HUBSPOT_OWNER]->(:HubSpotOwner)-[:OWNS_CONTACT]->(:HubSpotContact)"
+      description: "the CRM owner identity for the CONNECTING USER (me) — anchor 'my …' here as (me:AssistantUser)-[:HAS_HUBSPOT_OWNER]->(:HubSpotOwner)"
   properties:
     id:
-      description: "Owner id (digits) — identity, and the key contacts filter by (hubspot_owner_id)."
+      description: "Owner id (digits) — identity, and the key records filter by (hubspot_owner_id)."
       metadata:
         identity: "true"
     email:
       description: "Owner's email — the key resolved from the Person."
     firstName: "Owner's first name."
     lastName: "Owner's last name."
+
+- name: HubSpotDeal
+  parents: [Opportunity]
+  visibility: internal
+  userAnchor: false
+  description: >-
+    A HubSpot deal: an opportunity in a deal pipeline, open or closed. dealstage and pipeline are
+    stage and pipeline IDs, not labels — read labels with gateway.hubspot.pipelinesList. A deal is
+    open while hs_is_closed is 'false'.
+  virtualJoins:
+    - { anchorLabel: HubSpotOwner, relationship: OWNS_DEAL, keyField: id,
+        recordKeyField: hubspot_owner_id, producer: dealsByOwner,
+        description: "the deals a CRM owner OWNS — \"Dana's deals\", \"my deals\"" }
+    - { anchorLabel: HubSpotCompany, relationship: HAS_DEAL, keyField: hs_object_id,
+        recordKeyField: hs_primary_associated_company, producer: dealsByCompany,
+        description: "the deals whose PRIMARY company is this company" }
+    - { anchorLabel: HubSpotContact, relationship: HAS_DEAL, keyField: hs_object_id,
+        recordKeyField: contactKey, producer: dealsByContact,
+        description: "the deals associated with this contact" }
+    # implicitDoor: a bare `MATCH (o:Opportunity)` or `MATCH (d:HubSpotDeal)` takes THIS door —
+    # every deal, open or closed; the open pipeline is `WHERE d.hs_is_closed = 'false'`.
+    - { anchorLabel: HubSpotBook, relationship: HAS_DEAL, keyField: scope,
+        recordKeyField: scopeKey, producer: dealsAll, maxFanoutTotal: 10000, implicitDoor: true,
+        description: "Every deal in the portal — open, won and lost." }
+  properties:
+    hs_object_id: { description: "HubSpot object id — identity of the deal.", metadata: { identity: "true" } }
+    dealname: "The deal's name."
+    dealstage: "Stage ID within its pipeline (e.g. 'qualifiedtobuy', 'closedwon'). Changed only through the sensitive moveDealStage operation."
+    pipeline: "Pipeline ID ('default' is the standard sales pipeline)."
+    closedate: "ISO-8601 expected close date while open; the actual close date once closed. A past closedate on an OPEN deal means the deal is slipping."
+    amount: "Deal value as a string number, in the portal's currency."
+    hubspot_owner_id: "Owner id (digits) — who owns the deal; id-match key to HubSpotOwner."
+    notes_last_contacted: "ISO-8601 timestamp of the last time WE reached anyone on the deal (sent email, call, meeting). Inbound email does not move it. Empty means never."
+    notes_last_updated: "ISO-8601 timestamp of the last activity logged on the deal."
+    notes_next_activity_date: "ISO-8601 timestamp of the next UPCOMING activity on the deal; empty when nothing is scheduled ahead."
+    hs_lastmodifieddate: "ISO-8601 timestamp of the last change to any property of the deal record."
+    hs_is_closed: "'true' once the deal is won or lost, else 'false'."
+    hs_is_closed_won: "'true' when the deal was won."
+    hs_primary_associated_company: "Object id of the deal's primary company."
+    createdate: "ISO-8601 timestamp the deal was created."
+    contactKey: "Echo of the contact id this deal was fetched under (contact door only)."
+    scopeKey: "Echo of the book scope this deal was fetched under (book door only)."
+
+- name: HubSpotTicket
+  visibility: internal
+  userAnchor: false
+  description: >-
+    A HubSpot support ticket. hs_pipeline_stage is a stage ID within hs_pipeline (for the default
+    ticket pipeline '0': '1' New, '2' Waiting on contact, '3' Waiting on us, '4' Closed — confirm
+    with gateway.hubspot.pipelinesList). A ticket is open while hs_is_closed is 'false'.
+  virtualJoins:
+    - { anchorLabel: HubSpotCompany, relationship: HAS_TICKET, keyField: hs_object_id,
+        recordKeyField: hs_primary_company_id, producer: ticketsByCompany,
+        description: "the tickets whose PRIMARY company is this company — an account's support cases" }
+    - { anchorLabel: HubSpotContact, relationship: HAS_TICKET, keyField: hs_object_id,
+        recordKeyField: contactKey, producer: ticketsByContact,
+        description: "the tickets associated with this contact" }
+    - { anchorLabel: HubSpotOwner, relationship: OWNS_TICKET, keyField: id,
+        recordKeyField: hubspot_owner_id, producer: ticketsByOwner,
+        description: "the tickets assigned to this owner" }
+  properties:
+    hs_object_id: { description: "HubSpot object id — identity of the ticket.", metadata: { identity: "true" } }
+    subject: "One line saying what the ticket is about."
+    hs_pipeline: "Ticket pipeline ID."
+    hs_pipeline_stage: "Stage ID within the pipeline — see the type description."
+    hs_ticket_priority: "LOW, MEDIUM, HIGH or URGENT; empty when unset."
+    createdate: "ISO-8601 timestamp the ticket was opened."
+    closed_date: "ISO-8601 timestamp the ticket was closed; empty while open."
+    hs_is_closed: "'true' once the ticket is in a closed stage, else 'false'."
+    hubspot_owner_id: "Owner id (digits) of the ticket's assignee; often empty."
+    hs_primary_company_id: "Object id of the ticket's primary company."
+    hs_lastmodifieddate: "ISO-8601 timestamp of the last change to the ticket."
+    contactKey: "Echo of the contact id this ticket was fetched under (contact door only)."
+
+# ACTIVITIES. HubSpot keeps calls, emails, meetings, notes and tasks as five object types with
+# their own properties and search endpoints, so each is its own type here. They share the parent
+# HubSpotActivity, so a question about "activity" of any kind is one pattern:
+#
+#   MATCH (c:HubSpotContact {email:'…'})-[:HAS_ACTIVITY]->(a:HubSpotActivity)
+#   RETURN labels(a), a.hs_timestamp ORDER BY a.hs_timestamp DESC
+#
+# A specific kind is the child label: `-[:HAS_ACTIVITY]->(e:HubSpotEmail)`. The doors by contact,
+# company and deal go through HubSpot associations, which a search result does not carry, so those
+# producers ask one key per call and echo it (contactKey / companyKey / dealKey).
+- name: HubSpotActivity
+  visibility: internal
+  userAnchor: false
+  description: >-
+    Any logged engagement: a call, email, meeting, note or task (the child label says which).
+    hs_timestamp is when it happened, or for a task when it is DUE. Reached from a contact,
+    company or deal by HAS_ACTIVITY, and from an owner by OWNS_ACTIVITY.
+  properties:
+    hs_object_id: { description: "HubSpot object id — identity of the activity.", metadata: { identity: "true" } }
+    hs_timestamp: "ISO-8601 timestamp: when the call, email, meeting or note happened; for a task, when it is DUE."
+    hubspot_owner_id: "Owner id (digits) of who logged or owns the activity."
+    contactKey: "Echo of the contact id this activity was fetched under (contact door only)."
+    companyKey: "Echo of the company id this activity was fetched under (company door only)."
+    dealKey: "Echo of the deal id this activity was fetched under (deal door only)."
+
+- name: HubSpotCall
+  parents: [HubSpotActivity]
+  visibility: internal
+  userAnchor: false
+  description: "A logged call."
+  virtualJoins:
+    - { anchorLabel: HubSpotOwner, relationship: OWNS_ACTIVITY, keyField: id, recordKeyField: hubspot_owner_id, producer: callsByOwner, description: "calls this owner logged" }
+    - { anchorLabel: HubSpotContact, relationship: HAS_ACTIVITY, keyField: hs_object_id, recordKeyField: contactKey, producer: callsByContact, description: "calls with this contact" }
+    - { anchorLabel: HubSpotCompany, relationship: HAS_ACTIVITY, keyField: hs_object_id, recordKeyField: companyKey, producer: callsByCompany, description: "calls with this company" }
+    - { anchorLabel: HubSpotDeal, relationship: HAS_ACTIVITY, keyField: hs_object_id, recordKeyField: dealKey, producer: callsByDeal, description: "calls on this deal" }
+  properties:
+    hs_call_direction: "INBOUND (they called us) or OUTBOUND (we called them)."
+    hs_call_title: "The call's title."
+    hs_call_status: "COMPLETED, NO_ANSWER, BUSY, … as HubSpot records it."
+
+- name: HubSpotEmail
+  parents: [HubSpotActivity]
+  visibility: internal
+  userAnchor: false
+  description: "A logged email. hs_email_direction says who sent it: EMAIL is one WE sent, INCOMING_EMAIL one the contact sent us."
+  virtualJoins:
+    - { anchorLabel: HubSpotOwner, relationship: OWNS_ACTIVITY, keyField: id, recordKeyField: hubspot_owner_id, producer: emailsByOwner, description: "emails this owner logged" }
+    - { anchorLabel: HubSpotContact, relationship: HAS_ACTIVITY, keyField: hs_object_id, recordKeyField: contactKey, producer: emailsByContact, description: "emails to or from this contact" }
+    - { anchorLabel: HubSpotCompany, relationship: HAS_ACTIVITY, keyField: hs_object_id, recordKeyField: companyKey, producer: emailsByCompany, description: "emails with this company" }
+    - { anchorLabel: HubSpotDeal, relationship: HAS_ACTIVITY, keyField: hs_object_id, recordKeyField: dealKey, producer: emailsByDeal, description: "emails on this deal" }
+  properties:
+    hs_email_direction: "EMAIL (sent by us), INCOMING_EMAIL (sent to us), FORWARDED_EMAIL or DRAFT_EMAIL."
+    hs_email_subject: "Subject line."
+    hs_email_status: "Delivery status, as HubSpot records it."
+
+- name: HubSpotMeeting
+  parents: [HubSpotActivity]
+  visibility: internal
+  userAnchor: false
+  description: "A logged or scheduled meeting."
+  virtualJoins:
+    - { anchorLabel: HubSpotOwner, relationship: OWNS_ACTIVITY, keyField: id, recordKeyField: hubspot_owner_id, producer: meetingsByOwner, description: "meetings this owner holds" }
+    - { anchorLabel: HubSpotContact, relationship: HAS_ACTIVITY, keyField: hs_object_id, recordKeyField: contactKey, producer: meetingsByContact, description: "meetings with this contact" }
+    - { anchorLabel: HubSpotCompany, relationship: HAS_ACTIVITY, keyField: hs_object_id, recordKeyField: companyKey, producer: meetingsByCompany, description: "meetings with this company" }
+    - { anchorLabel: HubSpotDeal, relationship: HAS_ACTIVITY, keyField: hs_object_id, recordKeyField: dealKey, producer: meetingsByDeal, description: "meetings on this deal" }
+  properties:
+    hs_meeting_title: "The meeting's title."
+    hs_meeting_outcome: "SCHEDULED, COMPLETED, NO_SHOW, CANCELED, RESCHEDULED, … as HubSpot records it."
+    hs_meeting_start_time: "ISO-8601 start time."
+
+- name: HubSpotNote
+  parents: [HubSpotActivity]
+  visibility: internal
+  userAnchor: false
+  description: "A note one of our people wrote on a record. A note is not contact with the customer: it does not move notes_last_contacted."
+  virtualJoins:
+    - { anchorLabel: HubSpotOwner, relationship: OWNS_ACTIVITY, keyField: id, recordKeyField: hubspot_owner_id, producer: notesByOwner, description: "notes this owner wrote" }
+    - { anchorLabel: HubSpotContact, relationship: HAS_ACTIVITY, keyField: hs_object_id, recordKeyField: contactKey, producer: notesByContact, description: "notes on this contact" }
+    - { anchorLabel: HubSpotCompany, relationship: HAS_ACTIVITY, keyField: hs_object_id, recordKeyField: companyKey, producer: notesByCompany, description: "notes on this company" }
+    - { anchorLabel: HubSpotDeal, relationship: HAS_ACTIVITY, keyField: hs_object_id, recordKeyField: dealKey, producer: notesByDeal, description: "notes on this deal" }
+  properties:
+    hs_note_body: "The note, as HTML."
+
+- name: HubSpotTask
+  parents: [HubSpotActivity]
+  visibility: internal
+  userAnchor: false
+  description: >-
+    A to-do for an owner. hs_timestamp is the DUE date. A task is open until hs_task_status is
+    COMPLETED; an open task whose hs_timestamp is before today is a PAST-DUE follow-up.
+  virtualJoins:
+    - { anchorLabel: HubSpotOwner, relationship: OWNS_ACTIVITY, keyField: id, recordKeyField: hubspot_owner_id, producer: tasksByOwner, description: "tasks assigned to this owner — \"my follow-ups\"" }
+    - { anchorLabel: HubSpotContact, relationship: HAS_ACTIVITY, keyField: hs_object_id, recordKeyField: contactKey, producer: tasksByContact, description: "tasks about this contact" }
+    - { anchorLabel: HubSpotCompany, relationship: HAS_ACTIVITY, keyField: hs_object_id, recordKeyField: companyKey, producer: tasksByCompany, description: "tasks about this company" }
+    - { anchorLabel: HubSpotDeal, relationship: HAS_ACTIVITY, keyField: hs_object_id, recordKeyField: dealKey, producer: tasksByDeal, description: "tasks on this deal" }
+  properties:
+    hs_task_subject: "What is to be done."
+    hs_task_status: "NOT_STARTED, IN_PROGRESS, WAITING, DEFERRED or COMPLETED. Anything but COMPLETED is open."
+    hs_task_priority: "LOW, MEDIUM, HIGH or NONE."
+    hs_task_type: "TODO, CALL or EMAIL."

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-09-04T15:37:41.296Z",
+  "generatedAt": "2026-11-17T17:09:42.286Z",
   "entries": [
     {
       "namespace": "company",
@@ -10,6 +10,17 @@
         "type": "object",
         "properties": {}
       },
+      "outputSchema": {
+        "type": "boolean"
+      },
+      "onType": "HubSpotCompany",
+      "className": "HubSpotCompany"
+    },
+    {
+      "namespace": "company",
+      "name": "is",
+      "description": "Does this node carry [label], and therefore answer to its behaviours? A row out of the graph has a runtime type, not a static one, so NARROW rather than assert:",
+      "inputSchema": {},
       "outputSchema": {
         "type": "boolean"
       },
@@ -136,6 +147,17 @@
       },
       "outputSchema": {
         "type": "string"
+      },
+      "onType": "HubSpotContact",
+      "className": "HubSpotContact"
+    },
+    {
+      "namespace": "contact",
+      "name": "is",
+      "description": "Does this node carry [label], and therefore answer to its behaviours? A row out of the graph has a runtime type, not a static one, so NARROW rather than assert:",
+      "inputSchema": {},
+      "outputSchema": {
+        "type": "boolean"
       },
       "onType": "HubSpotContact",
       "className": "HubSpotContact"
@@ -295,6 +317,17 @@
       },
       "outputSchema": {
         "type": "string"
+      },
+      "onType": "HubSpotOwner",
+      "className": "HubSpotOwner"
+    },
+    {
+      "namespace": "owner",
+      "name": "is",
+      "description": "Does this node carry [label], and therefore answer to its behaviours? A row out of the graph has a runtime type, not a static one, so NARROW rather than assert:",
+      "inputSchema": {},
+      "outputSchema": {
+        "type": "boolean"
       },
       "onType": "HubSpotOwner",
       "className": "HubSpotOwner"

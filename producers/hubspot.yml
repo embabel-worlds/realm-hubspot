@@ -1,10 +1,16 @@
-# Virtual-join producers (see specs/VIRTUAL_CYPHER.md). Each is a BATCH-keyed
-# fetch: it accepts ALL anchor keys at once and returns the matching records, so
-# a traversal over many anchors costs one search, not N. Backed by the curated
-# HubSpot `objectsSearch` op (POST /crm/v3/objects/{objectType}/search), whose
-# `filterGroups[].filters[].values` takes an `IN` list — the keys are injected
-# there via `keyArg`. The JVM never sees HubSpot's REST shape beyond these two
-# pointers.
+# Virtual-join producers (see VIRTUAL_CYPHER.md in realm-spec), all over the curated `objectsSearch`
+# read (POST /crm/v3/objects/{objectType}/search) except `ownersByEmail`.
+#
+# BATCH-keyed where the record carries the key: a search whose `filterGroups[].filters[].values`
+# takes an `IN` list of every anchor key at once (`keyArg`), so a traversal over many anchors
+# costs one search per page, not N.
+#
+# PER-KEY where the key is a HubSpot ASSOCIATION (`associations.contact`, `.company`, `.deal`):
+# a search result does not say which associated record it matched, so these ask one key per call
+# and stamp it back with `echoKeyAs`.
+#
+# Every search walks HubSpot's cursor (`after` → `paging.next.after`) 100 records a page, so an
+# owner with more than one page of records is read whole rather than cut at HubSpot's default 10.
 
 - name: contactsByEmail
   kind: api
@@ -13,70 +19,15 @@
   keyArg: "filterGroups.0.filters.0.values"
   args:
     objectType: contacts
-    properties: [email, firstname, lastname, jobtitle, phone, company, associatedcompanyid, createdate, hs_lead_status, notes_last_activity_date, notes_last_contacted, hs_last_sales_activity_timestamp]
+    properties: [hs_object_id, email, firstname, lastname, jobtitle, phone, company, associatedcompanyid, createdate, hs_lead_status, notes_last_activity_date, hubspot_owner_id, notes_last_contacted, notes_next_activity_date, hs_last_sales_activity_timestamp]
     filterGroups:
       - filters:
           - propertyName: email
             operator: IN
-  cache:
-    kind: ttl
-    seconds: 300
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
 
-- name: companiesByDomain
-  kind: api
-  operation: objectsSearch
-  records: "$.results[*].properties"
-  keyArg: "filterGroups.0.filters.0.values"
-  args:
-    objectType: companies
-    properties: [hs_object_id, domain, name, industry, website, city, country]   # hs_object_id = node identity (dedup)
-    filterGroups:
-      - filters:
-          - propertyName: domain
-            operator: IN
-  cache:
-    kind: ttl
-    seconds: 300
-
-# A company by its HubSpot OBJECT ID — resolves a contact's primary-company association
-# (HubSpotContact.associatedcompanyid) to the company record (and its NAME). Keyed on
-# `hs_object_id` IN […]; the node dedupes with the domain path on the same hs_object_id.
-- name: companiesById
-  kind: api
-  operation: objectsSearch
-  records: "$.results[*].properties"
-  keyArg: "filterGroups.0.filters.0.values"
-  args:
-    objectType: companies
-    properties: [hs_object_id, domain, name, industry, website, city, country]
-    filterGroups:
-      - filters:
-          - propertyName: hs_object_id
-            operator: IN
-  cache:
-    kind: ttl
-    seconds: 300
-
-# Resolve a Person to their HubSpot owner by email. `ownersList` (GET /crm/v3/owners)
-# has no IN filter, so this fetches the org's owners (a small set — they're CRM users)
-# and the join matches each record's `email` to the queried Person emails. The owner
-# record carries `id` (the numeric owner id contacts filter by) + `email`/`firstName`/
-# `lastName`, stored straight onto the HubSpotOwner node.
-- name: ownersByEmail
-  kind: api
-  operation: ownersList
-  records: "$.results[*]"
-  cost:                  # one ownersList call covers all anchors → batchable + cheap bucket; the
-    bucket: hubspot      # optimizer resolves every anchor now (no deferral), unlike GitHub search
-    rate: 100/10s
-    batch: true
-  cache:
-    kind: ttl
-    seconds: 600
-
-# The contacts a given owner owns: search contacts where `hubspot_owner_id` is IN the
-# anchor owner ids. Returns the recency fields so "not emailed lately" filters them
-# (graph-side for now; a pushdown rule can scope it at the source later).
+# The contacts an owner owns: `hubspot_owner_id` IN the anchor owner ids.
 - name: contactsByOwner
   kind: api
   operation: objectsSearch
@@ -84,11 +35,510 @@
   keyArg: "filterGroups.0.filters.0.values"
   args:
     objectType: contacts
-    properties: [email, firstname, lastname, jobtitle, phone, company, associatedcompanyid, createdate, hs_lead_status, notes_last_activity_date, hubspot_owner_id, notes_last_contacted, hs_last_sales_activity_timestamp]
+    properties: [hs_object_id, email, firstname, lastname, jobtitle, phone, company, associatedcompanyid, createdate, hs_lead_status, notes_last_activity_date, hubspot_owner_id, notes_last_contacted, notes_next_activity_date, hs_last_sales_activity_timestamp]
     filterGroups:
       - filters:
           - propertyName: hubspot_owner_id
             operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+# The contacts whose primary company is the anchor company.
+- name: contactsByCompany
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  args:
+    objectType: contacts
+    properties: [hs_object_id, email, firstname, lastname, jobtitle, phone, company, associatedcompanyid, createdate, hs_lead_status, notes_last_activity_date, hubspot_owner_id, notes_last_contacted, notes_next_activity_date, hs_last_sales_activity_timestamp]
+    filterGroups:
+      - filters:
+          - propertyName: associatedcompanyid
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+# hs_object_id is the node identity, so the domain, id and book doors dedupe onto one company.
+- name: companiesByDomain
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  args:
+    objectType: companies
+    properties: [hs_object_id, domain, name, industry, website, city, country, hubspot_owner_id, notes_last_contacted]
+    filterGroups:
+      - filters:
+          - propertyName: domain
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+# A company by its object id — a contact's associatedcompanyid resolves to the company (and its name).
+- name: companiesById
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  args:
+    objectType: companies
+    properties: [hs_object_id, domain, name, industry, website, city, country, hubspot_owner_id, notes_last_contacted]
+    filterGroups:
+      - filters:
+          - propertyName: hs_object_id
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+- name: companiesAll
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyTemplate: ""   # unkeyed: the whole collection; the book scope is only echoed
+  echoKeyAs: scopeKey
+  args:
+    objectType: companies
+    properties: [hs_object_id, domain, name, industry, website, city, country, hubspot_owner_id, notes_last_contacted]
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+# Resolve a Person to their HubSpot owner by email. `ownersList` (GET /crm/v3/owners) has no IN
+# filter, so this fetches the portal's owners (a small set — they're CRM users) and the join
+# matches each record's `email` to the queried Person emails.
+- name: ownersByEmail
+  kind: api
+  operation: ownersList
+  records: "$.results[*]"
+  args:
+    limit: 100
+  cost:                  # one ownersList call covers all anchors → batchable + cheap bucket
+    bucket: hubspot
+    rate: 100/10s
+    batch: true
   cache:
     kind: ttl
-    seconds: 300
+    seconds: 600
+
+# Deals.
+- name: dealsByOwner
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  args:
+    objectType: deals
+    properties: [hs_object_id, dealname, dealstage, pipeline, closedate, amount, hubspot_owner_id, notes_last_contacted, notes_last_updated, notes_next_activity_date, hs_lastmodifieddate, hs_is_closed, hs_is_closed_won, hs_primary_associated_company, createdate]
+    filterGroups:
+      - filters:
+          - propertyName: hubspot_owner_id
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+- name: dealsByCompany
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  args:
+    objectType: deals
+    properties: [hs_object_id, dealname, dealstage, pipeline, closedate, amount, hubspot_owner_id, notes_last_contacted, notes_last_updated, notes_next_activity_date, hs_lastmodifieddate, hs_is_closed, hs_is_closed_won, hs_primary_associated_company, createdate]
+    filterGroups:
+      - filters:
+          - propertyName: hs_primary_associated_company
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+- name: dealsByContact
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  echoKeyAs: contactKey
+  args:
+    objectType: deals
+    properties: [hs_object_id, dealname, dealstage, pipeline, closedate, amount, hubspot_owner_id, notes_last_contacted, notes_last_updated, notes_next_activity_date, hs_lastmodifieddate, hs_is_closed, hs_is_closed_won, hs_primary_associated_company, createdate]
+    filterGroups:
+      - filters:
+          - propertyName: associations.contact
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+- name: dealsAll
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyTemplate: ""   # unkeyed: the whole collection; the book scope is only echoed
+  echoKeyAs: scopeKey
+  args:
+    objectType: deals
+    properties: [hs_object_id, dealname, dealstage, pipeline, closedate, amount, hubspot_owner_id, notes_last_contacted, notes_last_updated, notes_next_activity_date, hs_lastmodifieddate, hs_is_closed, hs_is_closed_won, hs_primary_associated_company, createdate]
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+# Tickets.
+- name: ticketsByCompany
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  args:
+    objectType: tickets
+    properties: [hs_object_id, subject, hs_pipeline, hs_pipeline_stage, hs_ticket_priority, createdate, closed_date, hs_is_closed, hubspot_owner_id, hs_primary_company_id, hs_lastmodifieddate]
+    filterGroups:
+      - filters:
+          - propertyName: hs_primary_company_id
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+- name: ticketsByOwner
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  args:
+    objectType: tickets
+    properties: [hs_object_id, subject, hs_pipeline, hs_pipeline_stage, hs_ticket_priority, createdate, closed_date, hs_is_closed, hubspot_owner_id, hs_primary_company_id, hs_lastmodifieddate]
+    filterGroups:
+      - filters:
+          - propertyName: hubspot_owner_id
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+- name: ticketsByContact
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  echoKeyAs: contactKey
+  args:
+    objectType: tickets
+    properties: [hs_object_id, subject, hs_pipeline, hs_pipeline_stage, hs_ticket_priority, createdate, closed_date, hs_is_closed, hubspot_owner_id, hs_primary_company_id, hs_lastmodifieddate]
+    filterGroups:
+      - filters:
+          - propertyName: associations.contact
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+# Activities: calls, emails, meetings, notes and tasks — one producer per object type and door.
+
+- name: callsByOwner
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  args:
+    objectType: calls
+    properties: [hs_object_id, hs_timestamp, hubspot_owner_id, hs_call_direction, hs_call_title, hs_call_status]
+    filterGroups:
+      - filters:
+          - propertyName: hubspot_owner_id
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+- name: callsByContact
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  echoKeyAs: contactKey
+  args:
+    objectType: calls
+    properties: [hs_object_id, hs_timestamp, hubspot_owner_id, hs_call_direction, hs_call_title, hs_call_status]
+    filterGroups:
+      - filters:
+          - propertyName: associations.contact
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+- name: callsByCompany
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  echoKeyAs: companyKey
+  args:
+    objectType: calls
+    properties: [hs_object_id, hs_timestamp, hubspot_owner_id, hs_call_direction, hs_call_title, hs_call_status]
+    filterGroups:
+      - filters:
+          - propertyName: associations.company
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+- name: callsByDeal
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  echoKeyAs: dealKey
+  args:
+    objectType: calls
+    properties: [hs_object_id, hs_timestamp, hubspot_owner_id, hs_call_direction, hs_call_title, hs_call_status]
+    filterGroups:
+      - filters:
+          - propertyName: associations.deal
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+- name: emailsByOwner
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  args:
+    objectType: emails
+    properties: [hs_object_id, hs_timestamp, hubspot_owner_id, hs_email_direction, hs_email_subject, hs_email_status]
+    filterGroups:
+      - filters:
+          - propertyName: hubspot_owner_id
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+- name: emailsByContact
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  echoKeyAs: contactKey
+  args:
+    objectType: emails
+    properties: [hs_object_id, hs_timestamp, hubspot_owner_id, hs_email_direction, hs_email_subject, hs_email_status]
+    filterGroups:
+      - filters:
+          - propertyName: associations.contact
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+- name: emailsByCompany
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  echoKeyAs: companyKey
+  args:
+    objectType: emails
+    properties: [hs_object_id, hs_timestamp, hubspot_owner_id, hs_email_direction, hs_email_subject, hs_email_status]
+    filterGroups:
+      - filters:
+          - propertyName: associations.company
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+- name: emailsByDeal
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  echoKeyAs: dealKey
+  args:
+    objectType: emails
+    properties: [hs_object_id, hs_timestamp, hubspot_owner_id, hs_email_direction, hs_email_subject, hs_email_status]
+    filterGroups:
+      - filters:
+          - propertyName: associations.deal
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+- name: meetingsByOwner
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  args:
+    objectType: meetings
+    properties: [hs_object_id, hs_timestamp, hubspot_owner_id, hs_meeting_title, hs_meeting_outcome, hs_meeting_start_time]
+    filterGroups:
+      - filters:
+          - propertyName: hubspot_owner_id
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+- name: meetingsByContact
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  echoKeyAs: contactKey
+  args:
+    objectType: meetings
+    properties: [hs_object_id, hs_timestamp, hubspot_owner_id, hs_meeting_title, hs_meeting_outcome, hs_meeting_start_time]
+    filterGroups:
+      - filters:
+          - propertyName: associations.contact
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+- name: meetingsByCompany
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  echoKeyAs: companyKey
+  args:
+    objectType: meetings
+    properties: [hs_object_id, hs_timestamp, hubspot_owner_id, hs_meeting_title, hs_meeting_outcome, hs_meeting_start_time]
+    filterGroups:
+      - filters:
+          - propertyName: associations.company
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+- name: meetingsByDeal
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  echoKeyAs: dealKey
+  args:
+    objectType: meetings
+    properties: [hs_object_id, hs_timestamp, hubspot_owner_id, hs_meeting_title, hs_meeting_outcome, hs_meeting_start_time]
+    filterGroups:
+      - filters:
+          - propertyName: associations.deal
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+- name: notesByOwner
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  args:
+    objectType: notes
+    properties: [hs_object_id, hs_timestamp, hubspot_owner_id, hs_note_body]
+    filterGroups:
+      - filters:
+          - propertyName: hubspot_owner_id
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+- name: notesByContact
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  echoKeyAs: contactKey
+  args:
+    objectType: notes
+    properties: [hs_object_id, hs_timestamp, hubspot_owner_id, hs_note_body]
+    filterGroups:
+      - filters:
+          - propertyName: associations.contact
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+- name: notesByCompany
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  echoKeyAs: companyKey
+  args:
+    objectType: notes
+    properties: [hs_object_id, hs_timestamp, hubspot_owner_id, hs_note_body]
+    filterGroups:
+      - filters:
+          - propertyName: associations.company
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+- name: notesByDeal
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  echoKeyAs: dealKey
+  args:
+    objectType: notes
+    properties: [hs_object_id, hs_timestamp, hubspot_owner_id, hs_note_body]
+    filterGroups:
+      - filters:
+          - propertyName: associations.deal
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+- name: tasksByOwner
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  args:
+    objectType: tasks
+    properties: [hs_object_id, hs_timestamp, hubspot_owner_id, hs_task_subject, hs_task_status, hs_task_priority, hs_task_type]
+    filterGroups:
+      - filters:
+          - propertyName: hubspot_owner_id
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+- name: tasksByContact
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  echoKeyAs: contactKey
+  args:
+    objectType: tasks
+    properties: [hs_object_id, hs_timestamp, hubspot_owner_id, hs_task_subject, hs_task_status, hs_task_priority, hs_task_type]
+    filterGroups:
+      - filters:
+          - propertyName: associations.contact
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+- name: tasksByCompany
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  echoKeyAs: companyKey
+  args:
+    objectType: tasks
+    properties: [hs_object_id, hs_timestamp, hubspot_owner_id, hs_task_subject, hs_task_status, hs_task_priority, hs_task_type]
+    filterGroups:
+      - filters:
+          - propertyName: associations.company
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+- name: tasksByDeal
+  kind: api
+  operation: objectsSearch
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  echoKeyAs: dealKey
+  args:
+    objectType: tasks
+    properties: [hs_object_id, hs_timestamp, hubspot_owner_id, hs_task_subject, hs_task_status, hs_task_priority, hs_task_type]
+    filterGroups:
+      - filters:
+          - propertyName: associations.deal
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }

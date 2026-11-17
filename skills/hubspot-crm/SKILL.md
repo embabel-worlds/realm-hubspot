@@ -1,9 +1,62 @@
 ---
 name: hubspot-crm
-description: HubSpot CRM — contacts, companies, deals, tickets, pipelines, owners, associations. Activate BEFORE any HubSpot call; it returns the namespaces and rules to follow.
+description: HubSpot CRM — contacts, companies, deals, tickets, activities (calls, emails, meetings, notes, tasks), pipelines, owners, associations. Activate BEFORE any HubSpot call; it returns the namespaces and rules to follow.
 ---
 
 # HubSpot CRM Workflows
+
+## Asking the right question
+
+HubSpot's date properties answer narrower questions than their names suggest. Pick the one
+that means what the user asked:
+
+| The user asks | Read | Why |
+|---|---|---|
+| "last contacted", "gone quiet", "no touch in 30 days" | `notes_last_contacted` on the contact, company or deal | The last time WE reached them: a sent email, a call, a meeting. An email THEY sent us does not move it (measured on a live portal), and neither does a note. |
+| "not emailed in N days" | the contact's `HubSpotEmail` activities with `hs_email_direction = 'EMAIL'` (sent by us) | `notes_last_contacted` also counts calls and meetings, so it answers a different question. |
+| "past-due follow-ups", "overdue tasks" | `HubSpotTask` with `hs_task_status <> 'COMPLETED'` and `hs_timestamp` before today | A task's `hs_timestamp` is its DUE date. |
+| "what's next", "anything scheduled" | `notes_next_activity_date` | Shows only UPCOMING activity. An overdue task is not in it, so an empty value never means "nothing outstanding". |
+| "any activity at all" | `notes_last_activity_date` | Every kind, inbound and notes included. |
+| "stalled deal" | open deal (`hs_is_closed = 'false'`) whose `notes_last_contacted` and `hs_lastmodifieddate` are old | Say which threshold you used. |
+| "slipping deal" | open deal whose `closedate` is before today | The close date passed and the deal is still open. |
+| "open tickets" | `HubSpotTicket` with `hs_is_closed = 'false'` | Stage ids differ by pipeline; `hs_is_closed` does not. |
+
+Compare ISO timestamps lexically against today's date (`'2026-11-17'`), and say which date you
+took as today.
+
+## Through the knowledge graph
+
+Every HubSpot record type is virtual: a Cypher query that traverses to it fetches it live.
+
+```cypher
+// Dana's open deals and when we last reached anyone on them
+MATCH (p:Person) WHERE toLower(p.name) CONTAINS 'dana'
+MATCH (p)-[:HAS_HUBSPOT_OWNER]->(:HubSpotOwner)-[:OWNS_DEAL]->(d:HubSpotDeal)
+WHERE d.hs_is_closed = 'false'
+RETURN d.dealname, d.dealstage, d.closedate, d.notes_last_contacted, d.hs_lastmodifieddate
+
+// My past-due follow-ups
+MATCH (me:AssistantUser)-[:HAS_HUBSPOT_OWNER]->(:HubSpotOwner)-[:OWNS_ACTIVITY]->(t:HubSpotTask)
+WHERE t.hs_task_status <> 'COMPLETED' AND t.hs_timestamp < '2026-11-17'
+RETURN t.hs_task_subject, t.hs_timestamp
+
+// An account's open tickets
+MATCH (b:HubSpotBook {scope:'all'})-[:HAS_COMPANY]->(co:HubSpotCompany {name:'Example Co'})-[:HAS_TICKET]->(t:HubSpotTicket)
+WHERE t.hs_is_closed = 'false'
+RETURN t.subject, t.hs_ticket_priority, t.createdate
+```
+
+| From | Edge | To |
+|---|---|---|
+| `AssistantUser`, `Person` | `HAS_HUBSPOT_OWNER` | `HubSpotOwner` |
+| `HubSpotOwner` | `OWNS_CONTACT`, `OWNS_DEAL`, `OWNS_TICKET`, `OWNS_ACTIVITY` | contacts, deals, tickets, activities |
+| `HubSpotBook {scope:'all'}` | `HAS_COMPANY`, `HAS_DEAL` | every company, every deal |
+| `HubSpotCompany` | `HAS_CONTACT`, `HAS_DEAL`, `HAS_TICKET` | by the record's PRIMARY company |
+| `HubSpotContact` | `HAS_PRIMARY_COMPANY`, `HAS_DEAL`, `HAS_TICKET` | |
+| `HubSpotContact`, `HubSpotCompany`, `HubSpotDeal` | `HAS_ACTIVITY` | `HubSpotActivity` (any kind) or a kind: `HubSpotCall`, `HubSpotEmail`, `HubSpotMeeting`, `HubSpotNote`, `HubSpotTask` |
+| `CustomerAccount` | `TRACKED_AS` | `HubSpotCompany`, by domain |
+
+`dealstage`, `pipeline` and `hs_pipeline_stage` hold IDs; map them to labels with `pipelinesList`.
 
 ## Namespace
 
