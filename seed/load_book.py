@@ -216,10 +216,11 @@ def plan(book, shift, owner, option, stage, ticket_stage):
 
 
 def last_contacted(rec, links, target):
-    """Per `target` sid (contacts, companies or deals): the newest linked call, email or meeting timestamp HubSpot should roll up."""
+    """Per `target` sid (contacts, companies or deals): the newest linked call, outbound email or meeting timestamp
+    HubSpot rolls up. Measured on the Test Portal 2026-11-17: inbound emails do not count toward notes_last_contacted."""
     out = {}
     for obj, sid, to, cid in links:
-        if to == target and obj in ("calls", "emails", "meetings"):
+        if to == target and obj in ("calls", "emails", "meetings") and rec[obj][sid].get("hs_email_direction") != "INCOMING_EMAIL":
             out[cid] = max(out.get(cid, "0"), rec[obj][sid]["hs_timestamp"], key=int)
     return out
 
