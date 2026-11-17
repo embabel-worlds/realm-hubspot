@@ -15,6 +15,9 @@
 # HubSpot allows five search calls a second per portal, so every search producer shares one
 # `hubspot-search` bucket paced at four a second; a traversal over 40 contacts waits rather than
 # being refused with a 429.
+# shortcut: a PER-KEY traversal (activities by contact) gets at most about 220 keys, the host's
+# five converge windows of 40, before the engine answers UNSOLVABLE with rewrite advice; an owner
+# with more contacts needs a narrower question or a batch association read the realm lacks today.
 
 - name: contactsByEmail
   kind: api
@@ -120,9 +123,8 @@
   records: "$.results[*]"
   keyTemplate: ""   # unkeyed: the whole collection; the book scope is only echoed
   echoKeyAs: scopeKey
-  args:
-    limit: 100
   cost: { bucket: hubspot, rate: 100/10s }
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
   cache: { kind: ttl, seconds: 600 }
 
 # Resolve a Person to their HubSpot owner by email. `ownersList` (GET /crm/v3/owners) has no IN
@@ -132,8 +134,7 @@
   kind: api
   operation: ownersList
   records: "$.results[*]"
-  args:
-    limit: 100
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
   cost:                  # one ownersList call covers all anchors → batchable + cheap bucket
     bucket: hubspot
     rate: 100/10s

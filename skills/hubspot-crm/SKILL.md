@@ -49,7 +49,8 @@ is the owner's login email.
 // Dana's stalled deals: open, nobody reached in 45 days
 MATCH (o:HubSpotOwner) WHERE toLower(o.firstName) = 'dana'
 MATCH (o)-[:OWNS_DEAL]->(d:HubSpotDeal)
-WHERE d.hs_is_closed = 'false' AND substring(d.notes_last_contacted, 0, 10) <= '<today-45d>'
+WHERE d.hs_is_closed = 'false'
+  AND (d.notes_last_contacted IS NULL OR substring(d.notes_last_contacted, 0, 10) <= '<today-45d>')
 RETURN d.dealname, d.dealstage, d.closedate, d.notes_last_contacted
 
 // Dana's contacts we haven't emailed in 30 days: one query, never a loop of calls per contact
