@@ -73,12 +73,17 @@ function accepts(schema: Json, value: Json): boolean {
   return typeof value === (s.type === "integer" ? "number" : s.type) && (!s.enum || s.enum.includes(value));
 }
 
-/** Every keyword the captured host's schema walk accepts; anything else (additionalProperties, oneOf, …) it refuses. */
-const SCHEMA_KEYWORDS = new Set(["type", "properties", "required", "description", "items", "enum", "format", "$ref"]);
+/**
+ * Every keyword the captured host's schema walk accepts. `additionalProperties` counts only as
+ * `false` (closure, which it enforces anyway); `true`, a schema, `oneOf` and the rest it refuses.
+ */
+const CLOSED = "additionalProperties: false";
+const SCHEMA_KEYWORDS = new Set(["type", "properties", "required", "description", "items", "enum", "format", "$ref", CLOSED]);
 function keywordsOf(schema: Json, seen: Json[] = []): string[] {
   const s = deref(schema);
   if (seen.includes(s)) return [];
-  const own = Object.keys(schema).concat(schema.$ref ? Object.keys(s) : []);
+  const own = Object.entries(schema).concat(schema.$ref ? Object.entries(s) : [])
+    .map(([k, v]) => (k === "additionalProperties" && v === false ? CLOSED : k));
   const children = [...Object.values(s.properties ?? {}), ...(s.items ? [s.items] : [])];
   return own.concat(children.flatMap((c) => keywordsOf(c, [...seen, s])));
 }
@@ -158,6 +163,27 @@ describe("effect tiers", () => {
       expect(Object.keys(o.op.requestBody), o.id).toEqual(["content"]);
       expect(keywordsOf(o.op.requestBody.content["application/json"].schema).filter((k) => !SCHEMA_KEYWORDS.has(k)), o.id).toEqual([]);
     }
+  });
+
+  it("the keyword model takes additionalProperties: false and refuses true or a schema", () => {
+    const bad = (schema: Json) => keywordsOf(schema).filter((k) => !SCHEMA_KEYWORDS.has(k));
+    expect(bad({ type: "object", additionalProperties: false })).toEqual([]);
+    expect(bad({ type: "object", additionalProperties: true })).toEqual(["additionalProperties"]);
+    expect(bad({ type: "object", additionalProperties: { type: "string" } })).toEqual(["additionalProperties"]);
+  });
+
+  it("every object in every write body declares additionalProperties: false, which embabel-api-client enforces", () => {
+    const open: string[] = [];
+    const walk = (node: Json, at: string): void => {
+      const s = deref(node);
+      if (s.type === "object" && s.additionalProperties !== false) open.push(at);
+      for (const [k, v] of Object.entries(s.properties ?? {})) walk(v, `${at}.${k}`);
+      if (s.items) walk(s.items, `${at}[]`);
+    };
+    const bodies = writeOps.filter((o) => o.op.requestBody);
+    expect(bodies.map((o) => o.id).sort()).toEqual(["dealMoveStage", "dealUpdate", "notesCreate", "tasksCreate"]);
+    for (const o of bodies) walk(o.op.requestBody.content["application/json"].schema, o.id);
+    expect(open).toEqual([]);
   });
 });
 

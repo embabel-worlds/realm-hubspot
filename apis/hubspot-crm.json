@@ -493,10 +493,12 @@
       },
       "NoteCreate": {
         "type": "object",
+        "additionalProperties": false,
         "required": ["properties"],
         "properties": {
           "properties": {
             "type": "object",
+            "additionalProperties": false,
             "required": ["hs_note_body", "hs_timestamp"],
             "properties": {
               "hs_note_body": { "type": "string", "description": "The note, as text or simple HTML." },
@@ -508,10 +510,12 @@
       },
       "TaskCreate": {
         "type": "object",
+        "additionalProperties": false,
         "required": ["properties"],
         "properties": {
           "properties": {
             "type": "object",
+            "additionalProperties": false,
             "required": ["hs_task_subject", "hs_task_body", "hs_timestamp"],
             "properties": {
               "hs_task_subject": { "type": "string", "description": "What is to be done, in one line." },
@@ -527,10 +531,12 @@
       },
       "DealUpdate": {
         "type": "object",
+        "additionalProperties": false,
         "required": ["properties"],
         "properties": {
           "properties": {
             "type": "object",
+            "additionalProperties": false,
             "description": "The deal properties this operation may set, and no others. The stage and pipeline are not among them; a stage change goes through dealMoveStage.",
             "properties": {
               "dealname": { "type": "string", "description": "The deal's name." },
@@ -547,10 +553,12 @@
       },
       "DealStageMove": {
         "type": "object",
+        "additionalProperties": false,
         "required": ["properties"],
         "properties": {
           "properties": {
             "type": "object",
+            "additionalProperties": false,
             "required": ["dealstage"],
             "properties": {
               "dealstage": { "type": "string", "description": "Target stage ID, not its label; read stage IDs with pipelinesList for objectType deals." },
