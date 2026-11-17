@@ -85,27 +85,38 @@ def ms(when, shift):
 MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September",
           "October", "November", "December"]
 NAMES = sorted({n for f in MONTHS for n in (f, f[:3])} | {"Sept"}, key=len, reverse=True)
-DATES = re.compile(r"\b(\d{4})-(\d\d)-(\d\d)\b|\b(" + "|".join(NAMES) + r")(\.?) (\d{1,2})(st|nd|rd|th)?\b")
+M = "|".join(NAMES)
+DATES = re.compile(r"\b(?P<iso>(\d{4})-(\d\d)-(\d\d))\b"
+                   r"|\b(?P<name>" + M + r")(?P<dot>\.?) (?P<day>\d{1,2})(?P<sfx>st|nd|rd|th)?\b"
+                   r"|\b(?P<day2>\d{1,2})(?P<sfx2>st|nd|rd|th)? (?P<name2>" + M + r")(?P<dot2>\.?)(?=\W|$)")
 TEXT = {"hs_email_subject", "hs_email_text", "hs_call_title", "hs_call_body", "hs_note_body", "hs_task_subject",
         "hs_task_body", "hs_meeting_title", "description", "subject", "content"}
 
 
 def shift_text(text, shift, year):
     """Move dates written inside a text by `shift`, as the structured dates move, keeping each one's spelling style.
-    shortcut: a month-day without a year is read in the book's year, and weekday words are left as they are."""
+    shortcut: a month-day without a year is read in the book's year. Weekday words stay right because the shift is
+    whole weeks (week_shift); day-only references ("the 11th") are not moved, so the book must not use them."""
     def move(m):
-        if m.group(1):
-            return (dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3))) + shift).isoformat()
-        name, dot, day, suffix = m.group(4), m.group(5), int(m.group(6)), m.group(7)
+        if m["iso"]:
+            return (dt.date.fromisoformat(m["iso"]) + shift).isoformat()
+        name, dot, day, suffix = (m["name"], m["dot"], m["day"], m["sfx"]) if m["name"] else \
+            (m["name2"], m["dot2"], m["day2"], m["sfx2"])
         full = next(f for f in MONTHS if f.startswith(name[:3]))
         try:
-            d = dt.date(year, MONTHS.index(full) + 1, day) + shift
+            d = dt.date(year, MONTHS.index(full) + 1, int(day)) + shift
         except ValueError:
             return m.group(0)
-        month = MONTHS[d.month - 1] if name == full else MONTHS[d.month - 1][:3]
+        month = (MONTHS[d.month - 1] if name == full else MONTHS[d.month - 1][:3]) + dot
         sfx = "" if not suffix else "th" if 10 < d.day % 100 < 14 else {1: "st", 2: "nd", 3: "rd"}.get(d.day % 10, "th")
-        return f"{month}{dot} {d.day}{sfx}"
+        return f"{month} {d.day}{sfx}" if m["name"] else f"{d.day}{sfx} {month}"
     return DATES.sub(move, text) if isinstance(text, str) else text
+
+
+def week_shift(today, as_of):
+    """The whole number of weeks nearest to today - as_of, so every weekday in the book stays its weekday.
+    The book lands up to 3 days from today; its signals keep more than that from every cut-off (MARGIN 4)."""
+    return dt.timedelta(weeks=round((today - as_of).days / 7))
 
 
 def plan(book, shift, owner, option, stage, ticket_stage):
@@ -403,6 +414,10 @@ def self_check(book):
     assert dt.datetime.fromtimestamp(int(ms("2026-06-27", shift)) / 1000, dt.timezone.utc).date() == dt.date(2026, 11, 17)
     assert ms("2026-06-27T10:00:00", shift) == ms("2026-06-27 10:00:00", shift) == ms("2026-06-27T12:00:00+02:00", shift)
     assert all(sid in rec[o] and tid in rec[t] for o, sid, t, tid in links)
+    assert shift_text("Tuesday 16 June or the 2nd July; May we?", dt.timedelta(weeks=20), 2026) == \
+        "Tuesday 3 November or the 19th November; May we?"
+    assert week_shift(dt.date(2026, 11, 17), dt.date(2026, 6, 27)) == dt.timedelta(days=140)
+    assert week_shift(dt.date(2026, 11, 18), dt.date(2026, 6, 27)) == dt.timedelta(days=147)
     assert shift_text("presentation on June 30, call Mar. 3rd, due 2026-06-24; May we?", shift, 2026) == \
         "presentation on November 20, call Jul. 24th, due 2026-11-14; May we?"
     assert all(p[MARK] == sid for o in OBJECTS for sid, p in rec[o].items())
@@ -445,7 +460,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--book", required=True, type=Path, help="directory holding book.json, crm/ and support/")
     ap.add_argument("--portal", type=int, help="the portal id the token must belong to")
-    ap.add_argument("--today", type=dt.date.fromisoformat, default=dt.date.today(), help="the day the book's as_of lands on")
+    ap.add_argument("--today", type=dt.date.fromisoformat, default=dt.date.today(), help="the book's as_of lands on the same weekday nearest this day")
     ap.add_argument("--manifest", type=Path, default=Path(__file__).with_name("seeded.json"))
     ap.add_argument("--remove", action="store_true", help="delete every record carrying book_row_id")
     ap.add_argument("--yes", action="store_true", help="write; without it the loader only reads and plans")
@@ -471,10 +486,11 @@ def main():
                      "  and the owners; HubSpot's deleted sample records stay in its recycle bin.")
     samples = {o: [r["id"] for r in hs.search(o, [{"propertyName": "hs_object_source_id", "operator": "EQ", "value": "sample-contact"}])]
                for o in OBJECTS}
-    shift = dt.timedelta(days=(args.today - book_as_of(args.book)).days)
+    shift = week_shift(args.today, book_as_of(args.book))
     ctx = Portal(hs)
     new_pipelines = ctx.missing_pipelines(args.book)
-    print(f"portal {portal_id}; book as_of {book_as_of(args.book)} lands on {args.today} (shift {shift.days} days)")
+    print(f"portal {portal_id}; book as_of {book_as_of(args.book)} lands on {book_as_of(args.book) + shift} "
+          f"(shift {shift.days} days, whole weeks nearest to {args.today})")
     print("HubSpot sample records to delete: " + (", ".join(f"{len(v)} {o}" for o, v in samples.items() if v) or "none"))
     print("already seeded: " + (", ".join(f"{len(v)} {o}" for o, v in seeded.items() if v) or "none"))
     print(f"{MARK} property to create on: " + (", ".join(o for o in OBJECTS if o not in seeded) or "none")
@@ -506,7 +522,7 @@ def main():
     n = associate(hs, links, ids)
     expected = {o: last_contacted(rec, links, o) for o in ("contacts", "companies", "deals")}
     args.manifest.write_text(json.dumps({
-        "portal": portal_id, "today": args.today.isoformat(), "as_of": book_as_of(args.book).isoformat(),
+        "portal": portal_id, "today": args.today.isoformat(), "lands_on": (book_as_of(args.book) + shift).isoformat(), "as_of": book_as_of(args.book).isoformat(),
         "shift_days": shift.days, "ids": ids, "notes_last_contacted": expected}, indent=1, sort_keys=True))
     print(f"loaded; {n} associations; manifest {args.manifest}; waiting for HubSpot's rollups…")
     for o, want in expected.items():
