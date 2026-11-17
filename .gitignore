@@ -1,2 +1,4 @@
 node_modules/
 .idea/
+seed/seeded.json
+__pycache__/
