@@ -27,12 +27,8 @@ interface HubSpotGateway {
     }): Promise<HubSpotObject>;
     notesCreate(args: { properties: Record<string, string> }): Promise<HubSpotObject>;
     tasksCreate(args: { properties: Record<string, string> }): Promise<HubSpotObject>;
-    associationsCreateDefault(args: {
-      fromObjectType: "notes" | "tasks";
-      fromObjectId: string;
-      toObjectType: string;
-      toObjectId: string;
-    }): Promise<unknown>;
+    notesAssociate(args: { noteId: string; toObjectType: string; toObjectId: string }): Promise<unknown>;
+    tasksAssociate(args: { taskId: string; toObjectType: string; toObjectId: string }): Promise<unknown>;
   };
 }
 
@@ -106,9 +102,7 @@ export class HubSpotContact extends Entity {
       properties: { hs_note_body: body, hs_timestamp: new Date(now).toISOString() },
     });
     if (note?.id) {
-      await this.api.hubspot.associationsCreateDefault({
-        fromObjectType: "notes", fromObjectId: note.id, toObjectType: "contacts", toObjectId: contactId,
-      });
+      await this.api.hubspot.notesAssociate({ noteId: note.id, toObjectType: "contacts", toObjectId: contactId });
     }
     return note;
   }
@@ -119,15 +113,15 @@ export class HubSpotContact extends Entity {
     const task = await this.api.hubspot.tasksCreate({
       properties: {
         hs_task_subject: title,
+        // The host stamps an agent's write into hs_task_body (the spec's attribution field), as it does hs_note_body.
+        hs_task_body: title,
         hs_timestamp: dueIso ?? new Date().toISOString(),
         hs_task_status: "NOT_STARTED",
         hs_task_type: "TODO",
       },
     });
     if (task?.id) {
-      await this.api.hubspot.associationsCreateDefault({
-        fromObjectType: "tasks", fromObjectId: task.id, toObjectType: "contacts", toObjectId: contactId,
-      });
+      await this.api.hubspot.tasksAssociate({ taskId: task.id, toObjectType: "contacts", toObjectId: contactId });
     }
     return task;
   }

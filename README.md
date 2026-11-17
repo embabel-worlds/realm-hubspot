@@ -31,13 +31,13 @@ Writes, each declared with `x-embabel-effect` in the spec and listed in `write-o
 |---|---|---|
 | `notesCreate` | logs a note | Effect |
 | `tasksCreate` | creates a follow-up task | Effect |
-| `associationsCreateDefault` | attaches a note or task to a contact, company, deal or ticket | Effect |
+| `notesAssociate`, `tasksAssociate` | attach a note or task to a contact, company, deal or ticket; the source type is fixed in each path | Effect |
 | `dealUpdate` | sets a deal's name, amount, close date, owner, next step, description, priority or type; never its stage or pipeline | Effect |
-| `dealMoveStage` | moves a deal to another stage | Sensitive: a person approves each call |
+| `dealMoveStage` | moves a deal to another stage | Sensitive, `approval: always`: a person approves each call, in chat too |
 
 Nothing deletes, and nothing creates or updates a contact or company. `apis/apis.yml` exposes
-only the operations above; `tests/tiers.test.ts` checks that list as the host filters and
-classifies it, and tries the routes around each rule.
+only the operations above. `tests/tiers.test.ts` checks the spec's shape: the list as the host
+filters and classifies it, and that the spec declares no route around each rule.
 
 ## Setup
 
@@ -50,10 +50,11 @@ classifies it, and tries the routes around each rule.
    ```
    crm.objects.contacts.read   crm.objects.companies.read   crm.objects.owners.read
    crm.objects.deals.read      crm.objects.deals.write      crm.objects.tickets.read
-   crm.objects.contacts.write
+   crm.objects.calls.read      crm.objects.emails.read      crm.objects.meetings.read
+   crm.objects.notes.read      crm.objects.tasks.read       crm.objects.contacts.write
    ```
 
-   HubSpot has no notes or tasks write scope: it authorises creating one by the write scope of
+   HubSpot defines no notes or tasks write scope: it authorises creating one by the write scope of
    the record it belongs to, which is why `crm.objects.contacts.write` is there. The realm
    declares no operation that changes a contact.
 3. Set the key as `HUBSPOT_SERVICE_KEY` on the realm's settings (`keys.yml`). The host checks
@@ -76,9 +77,9 @@ RETURN d.dealname, d.dealstage, d.closedate, d.notes_last_contacted
 ```
 
 ```cypher
-// Your past-due follow-ups
+// Your past-due follow-ups (<today> is today's date, YYYY-MM-DD)
 MATCH (me:AssistantUser)-[:HAS_HUBSPOT_OWNER]->(:HubSpotOwner)-[:OWNS_ACTIVITY]->(t:HubSpotTask)
-WHERE t.hs_task_status <> 'COMPLETED' AND t.hs_timestamp < '2026-11-17'
+WHERE t.hs_task_status <> 'COMPLETED' AND t.hs_timestamp < '<today>'
 RETURN t.hs_task_subject, t.hs_timestamp
 ```
 

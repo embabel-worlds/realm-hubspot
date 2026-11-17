@@ -63,9 +63,7 @@ class HubSpotContact extends runtime_types_1.Entity {
             properties: { hs_note_body: body, hs_timestamp: new Date(now).toISOString() },
         });
         if (note?.id) {
-            await this.api.hubspot.associationsCreateDefault({
-                fromObjectType: "notes", fromObjectId: note.id, toObjectType: "contacts", toObjectId: contactId,
-            });
+            await this.api.hubspot.notesAssociate({ noteId: note.id, toObjectType: "contacts", toObjectId: contactId });
         }
         return note;
     }
@@ -75,15 +73,15 @@ class HubSpotContact extends runtime_types_1.Entity {
         const task = await this.api.hubspot.tasksCreate({
             properties: {
                 hs_task_subject: title,
+                // The host stamps an agent's write into hs_task_body (the spec's attribution field), as it does hs_note_body.
+                hs_task_body: title,
                 hs_timestamp: dueIso ?? new Date().toISOString(),
                 hs_task_status: "NOT_STARTED",
                 hs_task_type: "TODO",
             },
         });
         if (task?.id) {
-            await this.api.hubspot.associationsCreateDefault({
-                fromObjectType: "tasks", fromObjectId: task.id, toObjectType: "contacts", toObjectId: contactId,
-            });
+            await this.api.hubspot.tasksAssociate({ taskId: task.id, toObjectType: "contacts", toObjectId: contactId });
         }
         return task;
     }

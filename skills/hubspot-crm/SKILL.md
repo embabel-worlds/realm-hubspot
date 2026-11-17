@@ -17,27 +17,39 @@ that means what the user asked:
 | "past-due follow-ups", "overdue tasks" | `HubSpotTask` with `hs_task_status <> 'COMPLETED'` and `hs_timestamp` before today | A task's `hs_timestamp` is its DUE date. |
 | "what's next", "anything scheduled" | `notes_next_activity_date` | Shows only UPCOMING activity. An overdue task is not in it, so an empty value never means "nothing outstanding". |
 | "any activity at all" | `notes_last_activity_date` | Every kind, inbound and notes included. |
-| "stalled deal" | open deal (`hs_is_closed = 'false'`) whose `notes_last_contacted` and `hs_lastmodifieddate` are old | Say which threshold you used. |
+| "stalled deal" | open deal (`hs_is_closed = 'false'`) whose `notes_last_contacted` is 45 or more days before today | No email, call or meeting from us in 45 days. Not `hs_lastmodifieddate`: HubSpot stamps it at every write, so it says when the record changed, not when anyone talked. |
 | "slipping deal" | open deal whose `closedate` is before today | The close date passed and the deal is still open. |
 | "open tickets" | `HubSpotTicket` with `hs_is_closed = 'false'` | Stage ids differ by pipeline; `hs_is_closed` does not. |
 
-Compare ISO timestamps lexically against today's date (`'2026-11-17'`), and say which date you
-took as today.
+"Today" is the current date, or the date the conversation gives as today. Work cut-offs out from it and compare ISO timestamps lexically,
+and say which date you took as today:
+
+```javascript
+const today = new Date().toISOString().slice(0, 10);                          // "YYYY-MM-DD", unless given
+const daysBefore = (n) => new Date(Date.parse(today) - n * 86_400_000).toISOString().slice(0, 10);
+const dayOf = (iso) => iso.slice(0, 10);                                       // a timestamp's date
+const last = (deal) => deal.properties.notes_last_contacted;                   // absent: never contacted
+const stalled = (deal) => !last(deal) || dayOf(last(deal)) <= daysBefore(45);
+```
+
+Compare a timestamp's date (its first 10 characters) with a cut-off, or a timestamp exceeds its
+own day's cut-off. In the queries below, `<today>` stands for today's date as `YYYY-MM-DD` and
+`<today-45d>` for the date 45 days before it.
 
 ## Through the knowledge graph
 
 Every HubSpot record type is virtual: a Cypher query that traverses to it fetches it live.
 
 ```cypher
-// Dana's open deals and when we last reached anyone on them
+// Dana's stalled deals: open, nobody reached in 45 days
 MATCH (p:Person) WHERE toLower(p.name) CONTAINS 'dana'
 MATCH (p)-[:HAS_HUBSPOT_OWNER]->(:HubSpotOwner)-[:OWNS_DEAL]->(d:HubSpotDeal)
-WHERE d.hs_is_closed = 'false'
-RETURN d.dealname, d.dealstage, d.closedate, d.notes_last_contacted, d.hs_lastmodifieddate
+WHERE d.hs_is_closed = 'false' AND substring(d.notes_last_contacted, 0, 10) <= '<today-45d>'
+RETURN d.dealname, d.dealstage, d.closedate, d.notes_last_contacted
 
 // My past-due follow-ups
 MATCH (me:AssistantUser)-[:HAS_HUBSPOT_OWNER]->(:HubSpotOwner)-[:OWNS_ACTIVITY]->(t:HubSpotTask)
-WHERE t.hs_task_status <> 'COMPLETED' AND t.hs_timestamp < '2026-11-17'
+WHERE t.hs_task_status <> 'COMPLETED' AND t.hs_timestamp < '<today>'
 RETURN t.hs_task_subject, t.hs_timestamp
 
 // An account's open tickets
@@ -154,17 +166,19 @@ Five writes, nothing else. Each changes live CRM data.
 const note = await gateway.hubspot.notesCreate({
   properties: { hs_note_body: "Called about the renewal; they want a quote by Friday.", hs_timestamp: new Date().toISOString() },
 });
-await gateway.hubspot.associationsCreateDefault({
-  fromObjectType: "notes", fromObjectId: note.id, toObjectType: "contacts", toObjectId: "12345",
-});
+await gateway.hubspot.notesAssociate({ noteId: note.id, toObjectType: "contacts", toObjectId: "12345" });
 ```
 
-**Create a follow-up task** (`hs_timestamp` is the DUE date), then attach it the same way with `fromObjectType: "tasks"`:
+**Create a follow-up task** (`hs_timestamp` is the DUE date; `hs_task_body` is required, so repeat the subject when there is nothing more to say), then attach it with `tasksAssociate`:
 
 ```javascript
 const task = await gateway.hubspot.tasksCreate({
-  properties: { hs_task_subject: "Send the renewal quote", hs_timestamp: "2026-11-21T09:00:00Z", hs_task_type: "EMAIL", hubspot_owner_id: "67890" },
+  properties: {
+    hs_task_subject: "Send the renewal quote", hs_task_body: "They asked for it by Friday.",
+    hs_timestamp: new Date(Date.now() + 4 * 86_400_000).toISOString(), hs_task_type: "EMAIL", hubspot_owner_id: "67890",
+  },
 });
+await gateway.hubspot.tasksAssociate({ taskId: task.id, toObjectType: "contacts", toObjectId: "12345" });
 ```
 
 **Update a deal's properties** — `dealname`, `amount`, `closedate`, `hubspot_owner_id`, `hs_next_step`, `description`, `hs_priority`, `dealtype`, and no others:
@@ -173,7 +187,7 @@ const task = await gateway.hubspot.tasksCreate({
 await gateway.hubspot.dealUpdate({ dealId: "12345", properties: { amount: "25000", closedate: "2026-12-15" } });
 ```
 
-**Move a deal to another stage** — only through `dealMoveStage`. `dealUpdate` does not take `dealstage` or `pipeline`. A stage move is sensitive: the user is asked to approve it before it runs, so say what you are about to move and why. Take the stage ID from `pipelinesList`:
+**Move a deal to another stage** — only through `dealMoveStage`. `dealUpdate` does not take `dealstage` or `pipeline`. A stage move is sensitive: the user is asked to approve every one before it runs, so say what you are about to move and why. Take the stage ID from `pipelinesList`:
 
 ```javascript
 const pipes = await gateway.hubspot.pipelinesList({ objectType: "deals" });
@@ -217,8 +231,8 @@ const r = await gateway.hubspot.associationsGet({
 for (const a of r.results) console.log(`Linked to company ${a.toObjectId}`);
 ```
 
-`associationsCreateDefault` attaches a note or a task to a record (see Writing). It does not link
-contacts, companies or deals to each other.
+`notesAssociate` and `tasksAssociate` attach a note or a task to a record (see Writing). Nothing
+links contacts, companies or deals to each other.
 
 ## Pitfalls
 

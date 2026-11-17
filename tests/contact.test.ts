@@ -41,30 +41,26 @@ describe("HubSpotContact effectful verbs", () => {
   it("logNote resolves the contact id, creates the note, and associates it", async () => {
     const objectsGet = vi.fn(async () => ({ id: "501" }));
     const notesCreate = vi.fn(async () => ({ id: "note-1" }));
-    const associationsCreateDefault = vi.fn(async () => ({}));
-    await contact({}, { objectsGet, notesCreate, associationsCreateDefault }).logNote("Followed up re: renewal", NOW);
+    const notesAssociate = vi.fn(async () => ({}));
+    await contact({}, { objectsGet, notesCreate, notesAssociate }).logNote("Followed up re: renewal", NOW);
 
     expect(objectsGet).toHaveBeenCalledWith({ objectType: "contacts", objectId: "dana@example.com", idProperty: "email" });
     expect(notesCreate).toHaveBeenCalledWith(expect.objectContaining({
       properties: expect.objectContaining({ hs_note_body: "Followed up re: renewal" }),
     }));
-    expect(associationsCreateDefault).toHaveBeenCalledWith({
-      fromObjectType: "notes", fromObjectId: "note-1", toObjectType: "contacts", toObjectId: "501",
-    });
+    expect(notesAssociate).toHaveBeenCalledWith({ noteId: "note-1", toObjectType: "contacts", toObjectId: "501" });
   });
 
   it("createFollowUpTask creates a task and associates it to the contact", async () => {
     const objectsGet = vi.fn(async () => ({ id: "501" }));
     const tasksCreate = vi.fn(async () => ({ id: "task-1" }));
-    const associationsCreateDefault = vi.fn(async () => ({}));
-    await contact({}, { objectsGet, tasksCreate, associationsCreateDefault })
+    const tasksAssociate = vi.fn(async () => ({}));
+    await contact({}, { objectsGet, tasksCreate, tasksAssociate })
       .createFollowUpTask("Call Dana", "2026-07-01T09:00:00Z");
 
     expect(tasksCreate).toHaveBeenCalledWith(expect.objectContaining({
-      properties: expect.objectContaining({ hs_task_subject: "Call Dana", hs_timestamp: "2026-07-01T09:00:00Z" }),
+      properties: expect.objectContaining({ hs_task_subject: "Call Dana", hs_task_body: "Call Dana", hs_timestamp: "2026-07-01T09:00:00Z" }),
     }));
-    expect(associationsCreateDefault).toHaveBeenCalledWith(expect.objectContaining({
-      fromObjectType: "tasks", fromObjectId: "task-1", toObjectType: "contacts", toObjectId: "501",
-    }));
+    expect(tasksAssociate).toHaveBeenCalledWith({ taskId: "task-1", toObjectType: "contacts", toObjectId: "501" });
   });
 });

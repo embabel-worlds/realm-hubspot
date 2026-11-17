@@ -1,10 +1,16 @@
 /**
- * The write surface and its effect tiers, checked on the vendored spec as the host sees it:
- * the operations the host's tool filter lets through (`operation-ids` + `write-operation-ids`,
- * matched as embabel-api-client's `ApiModel.filterByOperationIds` matches them), classified the
- * way the host's `GatewayEffects` classifies them, and every write body checked the way the
- * captured host checks one (`CapturedApiWriteBody`: an object takes only the keys it declares).
- * Each "bypass" test tries a route around a rule and expects to find it closed.
+ * The write surface and its effect tiers, checked as a SPEC SHAPE on the vendored spec: these
+ * tests read `apis/` and assert what it declares. Nothing here runs a host.
+ *
+ * - The exposed list is the operations `operation-ids` + `write-operation-ids` select, matched as
+ *   embabel-api-client's `ApiModel.filterByOperationIds` matches them.
+ * - The tiers are read as `me`'s `GatewayEffects` reads `x-embabel-effect`.
+ * - The bodies are checked as the captured host's `CapturedApiWriteBody` checks one (an object
+ *   takes only the keys it declares). The captured host enforces that shape; `me` enforces it once
+ *   the embabel-api-client body and path-enum validation fix lands. Until then these tests show the
+ *   spec declares the restriction, not that `me` refuses a call.
+ *
+ * Each "spec closes" test names a route around a rule and asserts the spec declares no such route.
  */
 /// <reference types="vite/client" />
 import { describe, it, expect } from "vitest";
@@ -53,7 +59,7 @@ function deref(node: Json): Json {
 }
 const bodySchema = (o: Op): Json => deref(o.op.requestBody?.content?.["application/json"]?.schema);
 
-/** CapturedApiWriteBody.validate: a key the schema does not declare, or a missing required one, refuses. */
+/** A facsimile of the captured host's CapturedApiWriteBody.validate: a key the schema does not declare, or a missing required one, refuses. */
 function accepts(schema: Json, value: Json): boolean {
   const s = deref(schema);
   if (s.type === "object") {
@@ -81,26 +87,26 @@ const op = (id: string) => exposed.find((o) => o.id === id)!;
 const writeOps = exposed.filter((o) => effectOf(o).changes);
 const GENERIC_OR_PARTY = /^\/crm\/v3\/objects\/(contacts|companies|0-1|0-2|\{[^}]+\})(\/\{[^}]+\})?$/;
 
-describe("the operation list the host exposes", () => {
+describe("the operation list apis.yml selects", () => {
   it("names only operations the spec has, each once, and no read is also a write", () => {
     for (const id of [...reads, ...writes]) expect(allOps.filter((o) => o.id === id), id).toHaveLength(1);
     expect(reads.filter((id) => writes.includes(id))).toEqual([]);
     expect(exposed.map((o) => o.id).sort()).toEqual([...reads, ...writes].sort());
   });
 
-  it("stays inside the captured host's limits", () => {
+  it("stays inside the captured host's declared limits", () => {
     expect(reads.length).toBeGreaterThan(0);
     expect(writes.length).toBeLessThanOrEqual(64);
     expect(reads.length + writes.length).toBeLessThanOrEqual(128);
     for (const o of writeOps) expect(["post", "put", "patch", "delete"], o.id).toContain(o.method);
   });
 
-  it("bypass: no exposed operation, and none in the vendored spec, can DELETE", () => {
+  it("spec closes: no exposed operation, and none in the vendored spec, can DELETE", () => {
     expect(exposed.filter((o) => o.method === "delete").map((o) => o.id)).toEqual([]);
     expect(allOps.filter((o) => o.method === "delete").map((o) => o.id)).toEqual([]);
   });
 
-  it("bypass: no operation creates or updates a contact, a company or any object type generically", () => {
+  it("spec closes: no operation creates or updates a contact, a company or any object type generically", () => {
     const generic = (ops: Op[]) =>
       ops.filter((o) => o.method !== "get" && GENERIC_OR_PARTY.test(o.path)).map((o) => `${o.method} ${o.path}`);
     expect(generic(exposed)).toEqual([]);
@@ -130,6 +136,23 @@ describe("effect tiers", () => {
     expect(writeOps.filter((o) => effectOf(o).sensitive).map((o) => o.id)).toEqual(["dealMoveStage"]);
   });
 
+  it("dealMoveStage declares approval: always (GatewayEffects' approvalEveryCall), so a chat call asks too; no other write does", () => {
+    const approvalEveryCall = (o: Op) => o.op["x-embabel-effect"]?.approval === "always";
+    expect(writeOps.filter(approvalEveryCall).map((o) => o.id)).toEqual(["dealMoveStage"]);
+  });
+
+  it("every attribution names a required string in the write's body, so the host has a field to stamp", () => {
+    const attributed = writeOps.filter((o) => o.op["x-embabel-effect"].attribution);
+    expect(attributed.map((o) => o.id).sort()).toEqual(["notesCreate", "tasksCreate"]);
+    for (const o of attributed) {
+      const path: string[] = o.op["x-embabel-effect"].attribution.split(".");
+      const parent = path.slice(0, -1).reduce((n: Json, k: string) => deref(deref(n).properties[k]), bodySchema(o));
+      const leaf = path[path.length - 1];
+      expect(parent.required, o.id).toContain(leaf);
+      expect(deref(parent.properties[leaf]).type, o.id).toBe("string");
+    }
+  });
+
   it("every write body is closed: only keywords the captured host checks, no open map", () => {
     for (const o of writeOps.filter((x) => x.op.requestBody)) {
       expect(Object.keys(o.op.requestBody), o.id).toEqual(["content"]);
@@ -145,7 +168,7 @@ describe("deal stage changes", () => {
     expect(accepts(bodySchema(op("dealMoveStage")), stageMove)).toBe(true);
   });
 
-  it("bypass: the ordinary dealUpdate refuses dealstage and pipeline, alone or beside an allowed property", () => {
+  it("spec closes: the ordinary dealUpdate refuses dealstage and pipeline, alone or beside an allowed property", () => {
     const update = bodySchema(op("dealUpdate"));
     expect(accepts(update, { properties: { amount: "1000" } })).toBe(true);
     expect(accepts(update, stageMove)).toBe(false);
@@ -154,13 +177,18 @@ describe("deal stage changes", () => {
     expect(Object.keys(deref(update).properties.properties.properties)).not.toContain("dealstage");
   });
 
-  it("bypass: no write but dealMoveStage takes dealstage, so no other route moves a stage", () => {
+  it("spec closes: no write but dealMoveStage takes dealstage, so no other route moves a stage", () => {
     const takesStage = writeOps.filter((o) => o.op.requestBody && accepts(bodySchema(o), stageMove)).map((o) => o.id);
     expect(takesStage).toEqual(["dealMoveStage"]);
   });
 
-  it("bypass: an association attaches only a note or task, never rewires a contact or company", () => {
-    const from = op("associationsCreateDefault").op.parameters.map(deref).find((p: Json) => p.name === "fromObjectType");
-    expect(from.schema.enum).toEqual(["notes", "tasks"]);
+  it("spec closes: an association attaches only a note or task, its source fixed in the path, never a contact or company", () => {
+    const associations = writeOps.filter((o) => o.path.includes("/associations/"));
+    expect(associations.map((o) => o.path).sort()).toEqual([
+      "/crm/v4/objects/notes/{noteId}/associations/default/{toObjectType}/{toObjectId}",
+      "/crm/v4/objects/tasks/{taskId}/associations/default/{toObjectType}/{toObjectId}",
+    ]);
+    // No write path takes its source object type as an argument, so no host can be talked into another.
+    expect(writeOps.filter((o) => /\/objects\/\{/.test(o.path)).map((o) => o.id)).toEqual([]);
   });
 });

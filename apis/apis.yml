@@ -32,7 +32,8 @@
   write-operation-ids:
     - notesCreate
     - tasksCreate
-    - associationsCreateDefault
+    - notesAssociate
+    - tasksAssociate
     - dealUpdate
     - dealMoveStage
   auth: bearer
