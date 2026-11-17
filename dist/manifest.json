@@ -1,11 +1,11 @@
 {
   "version": 1,
-  "generatedAt": "2026-11-17T17:09:42.286Z",
+  "generatedAt": "2026-11-17T17:19:19.834Z",
   "entries": [
     {
       "namespace": "company",
       "name": "hasDomain",
-      "description": "Whether the company has a usable web domain (its identity / update key).",
+      "description": "Whether the company has a usable web domain (its link key to Organization and CustomerAccount).",
       "inputSchema": {
         "type": "object",
         "properties": {}
@@ -74,29 +74,6 @@
             "label",
             "hops"
           ]
-        }
-      },
-      "onType": "HubSpotCompany",
-      "className": "HubSpotCompany"
-    },
-    {
-      "namespace": "company",
-      "name": "update",
-      "description": "Update company properties (addressed by domain).",
-      "inputSchema": {
-        "type": "object",
-        "properties": {}
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {}
-          }
         }
       },
       "onType": "HubSpotCompany",
@@ -257,51 +234,6 @@
             "label",
             "hops"
           ]
-        }
-      },
-      "onType": "HubSpotContact",
-      "className": "HubSpotContact"
-    },
-    {
-      "namespace": "contact",
-      "name": "reassignOwner",
-      "description": "Reassign the contact to a different owner (by numeric owner id).",
-      "inputSchema": {
-        "type": "string"
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {}
-          }
-        }
-      },
-      "onType": "HubSpotContact",
-      "className": "HubSpotContact"
-    },
-    {
-      "namespace": "contact",
-      "name": "update",
-      "description": "Update contact properties (addressed by email, no id lookup needed).",
-      "inputSchema": {
-        "type": "object",
-        "properties": {}
-      },
-      "outputSchema": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {}
-          }
         }
       },
       "onType": "HubSpotContact",

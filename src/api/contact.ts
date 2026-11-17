@@ -2,7 +2,7 @@ import { Entity } from "@embabel/runtime-types";
 
 // ─── Data shapes ────────────────────────────────────────────────────────────
 
-/** A HubSpot object the write/read ops return (the slice the verbs read back). */
+/** A HubSpot object the ops return (the slice the verbs read back). */
 export interface HubSpotObject {
   id?: string;
   properties?: Record<string, string>;
@@ -10,13 +10,12 @@ export interface HubSpotObject {
 
 /**
  * The `gateway.hubspot` ops the verbs call, typed (the pack types the slice it
- * uses). Names are the OpenAPI operationIds. The CRM ops are generalised over
- * `objectType`, so the same four ops cover contacts, notes, tasks, etc.
+ * uses). Names are the OpenAPI operationIds.
  *
- * Addressing: HubSpot writes take the numeric object id, but a materialized
- * `HubSpotContact` is keyed by `email`. `objectsUpdate`/`objectsGet` accept
- * `idProperty: "email"` to address by email directly; note/task *associations*
- * need the numeric id, so those verbs resolve it once via `objectsGet`.
+ * Addressing: a materialized `HubSpotContact` is keyed by `email`, but an
+ * association needs the numeric object id, so the note/task verbs resolve it
+ * once via `objectsGet` with `idProperty: "email"`. The realm declares no
+ * operation that updates a contact, so no verb here does.
  */
 interface HubSpotGateway {
   hubspot: {
@@ -26,18 +25,10 @@ interface HubSpotGateway {
       idProperty?: string;
       properties?: string[];
     }): Promise<HubSpotObject>;
-    objectsUpdate(args: {
-      objectType: string;
-      objectId: string;
-      idProperty?: string;
-      properties: Record<string, string>;
-    }): Promise<HubSpotObject>;
-    objectsCreate(args: {
-      objectType: string;
-      properties: Record<string, string>;
-    }): Promise<HubSpotObject>;
+    notesCreate(args: { properties: Record<string, string> }): Promise<HubSpotObject>;
+    tasksCreate(args: { properties: Record<string, string> }): Promise<HubSpotObject>;
     associationsCreateDefault(args: {
-      fromObjectType: string;
+      fromObjectType: "notes" | "tasks";
       fromObjectId: string;
       toObjectType: string;
       toObjectId: string;
@@ -56,9 +47,8 @@ const DAY_MS = 86_400_000;
  *
  *  - **pure** verbs compute over the node's own scalar fields (name, contact
  *    recency, follow-up need), no I/O.
- *  - **effectful** verbs write back through `this.gateway.hubspot.*`. Property
- *    updates address the contact by `email` (`idProperty`); note/task verbs
- *    resolve the numeric id once, create the object, and associate it.
+ *  - **effectful** verbs log a note or a task through `this.gateway.hubspot.*`:
+ *    they resolve the numeric id once, create the object, and associate it.
  */
 export class HubSpotContact extends Entity {
   // `id` (the identity key) is inherited from Entity and equals the email.
@@ -100,7 +90,7 @@ export class HubSpotContact extends Entity {
     return this.isStale(days, now);
   }
 
-  // ── effectful verbs: write back through gateway.hubspot (the source) ──
+  // ── effectful verbs: log notes and tasks through gateway.hubspot (the source) ──
 
   /** Resolve the numeric HubSpot object id from this contact's email. */
   private async resolveId(): Promise<string> {
@@ -109,21 +99,10 @@ export class HubSpotContact extends Entity {
     return found.id;
   }
 
-  /** Update contact properties (addressed by email, no id lookup needed). */
-  async update(properties: Record<string, string>): Promise<HubSpotObject> {
-    return this.api.hubspot.objectsUpdate({ objectType: "contacts", objectId: this.email, idProperty: "email", properties });
-  }
-
-  /** Reassign the contact to a different owner (by numeric owner id). */
-  async reassignOwner(ownerId: string): Promise<HubSpotObject> {
-    return this.update({ hubspot_owner_id: ownerId });
-  }
-
   /** Log a note against the contact, associated to it. */
   async logNote(body: string, now: number = Date.now()): Promise<HubSpotObject> {
     const contactId = await this.resolveId();
-    const note = await this.api.hubspot.objectsCreate({
-      objectType: "notes",
+    const note = await this.api.hubspot.notesCreate({
       properties: { hs_note_body: body, hs_timestamp: new Date(now).toISOString() },
     });
     if (note?.id) {
@@ -137,8 +116,7 @@ export class HubSpotContact extends Entity {
   /** Create a follow-up task on the contact, due at `dueIso` (default: now). */
   async createFollowUpTask(title: string, dueIso?: string): Promise<HubSpotObject> {
     const contactId = await this.resolveId();
-    const task = await this.api.hubspot.objectsCreate({
-      objectType: "tasks",
+    const task = await this.api.hubspot.tasksCreate({
       properties: {
         hs_task_subject: title,
         hs_timestamp: dueIso ?? new Date().toISOString(),

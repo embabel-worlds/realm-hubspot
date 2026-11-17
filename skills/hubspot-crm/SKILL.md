@@ -75,9 +75,9 @@ method — pick from it. Never re-send the same call.
 
 1. **Don't fabricate IDs.** Object IDs, owner IDs, pipeline/stage IDs — every one comes from a tool result.
 2. **`properties` is `Map<String, String>`.** Even numeric fields (`amount`, `hs_object_id`) and dates come back as strings.
-3. **Search before update.** HubSpot has no "lookup by email" endpoint — use `objectsSearch` with a property filter.
+3. **Search before you write.** HubSpot has no "lookup by email" endpoint — use `objectsSearch` with a property filter to find the id.
 4. **Cap pagination.** Default `limit: 100` (the max). For "how many" use `objectsSearch` with `limit: 1` and read `total`.
-5. **Confirm writes with the user.** `objectsCreate`, `objectsUpdate`, `objectsArchive` mutate live CRM data.
+5. **Writes are few and narrow.** You can log a note, create a task, attach either to a record, update a deal's properties, and move a deal's stage. Nothing deletes, and nothing creates or updates a contact or company: say so when asked, rather than looking for a way round.
 
 ## Finding things
 
@@ -97,7 +97,7 @@ console.log(c.properties.email);
 ```javascript
 const r = await gateway.hubspot.objectsSearch({
   objectType: "contacts",
-  filterGroups: [{ filters: [{ propertyName: "email", operator: "EQ", value: "alice@acme.com" }] }],
+  filterGroups: [{ filters: [{ propertyName: "email", operator: "EQ", value: "alice@example.com" }] }],
   properties: ["email", "firstname", "lastname", "hs_object_id"],
   limit: 1,
 });
@@ -144,51 +144,41 @@ for (let page = 0; page < 5; page++) {                // hard cap
 }
 ```
 
-## Creating
+## Writing
+
+Five writes, nothing else. Each changes live CRM data.
+
+**Log a note, then attach it** to a contact, company, deal or ticket:
 
 ```javascript
-const c = await gateway.hubspot.objectsCreate({
-  objectType: "contacts",
-  properties: {                     // strings only — even numbers/dates
-    email: "alice@acme.com",
-    firstname: "Alice",
-    lastname: "Nguyen",
-    company: "Acme",
-  },
+const note = await gateway.hubspot.notesCreate({
+  properties: { hs_note_body: "Called about the renewal; they want a quote by Friday.", hs_timestamp: new Date().toISOString() },
 });
-console.log(`Created contact ${c.id}`);
+await gateway.hubspot.associationsCreateDefault({
+  fromObjectType: "notes", fromObjectId: note.id, toObjectType: "contacts", toObjectId: "12345",
+});
 ```
 
-For deals, include `pipeline` and `dealstage` — get valid IDs from `pipelinesList`:
+**Create a follow-up task** (`hs_timestamp` is the DUE date), then attach it the same way with `fromObjectType: "tasks"`:
+
+```javascript
+const task = await gateway.hubspot.tasksCreate({
+  properties: { hs_task_subject: "Send the renewal quote", hs_timestamp: "2026-11-21T09:00:00Z", hs_task_type: "EMAIL", hubspot_owner_id: "67890" },
+});
+```
+
+**Update a deal's properties** — `dealname`, `amount`, `closedate`, `hubspot_owner_id`, `hs_next_step`, `description`, `hs_priority`, `dealtype`, and no others:
+
+```javascript
+await gateway.hubspot.dealUpdate({ dealId: "12345", properties: { amount: "25000", closedate: "2026-12-15" } });
+```
+
+**Move a deal to another stage** — only through `dealMoveStage`. `dealUpdate` does not take `dealstage` or `pipeline`. A stage move is sensitive: the user is asked to approve it before it runs, so say what you are about to move and why. Take the stage ID from `pipelinesList`:
 
 ```javascript
 const pipes = await gateway.hubspot.pipelinesList({ objectType: "deals" });
-const sales = pipes.results.find(p => p.label === "Sales Pipeline");
-const newStage = sales.stages.find(s => s.label === "New").id;
-
-await gateway.hubspot.objectsCreate({
-  objectType: "deals",
-  properties: { dealname: "Acme — Q2 expansion", amount: "25000", pipeline: sales.id, dealstage: newStage },
-});
-```
-
-## Updating
-
-```javascript
-await gateway.hubspot.objectsUpdate({
-  objectType: "contacts",
-  objectId: "12345",
-  properties: { phone: "+1-415-555-0199", lifecyclestage: "customer" },
-});
-```
-
-Only the properties you pass are touched. `objectsUpdate` returns the updated object.
-
-## Archiving
-
-```javascript
-await gateway.hubspot.objectsArchive({ objectType: "contacts", objectId: "12345" });
-// 204 No Content. The object is soft-deleted; pass `archived: true` to objectsList to see it.
+const stage = pipes.results.find(p => p.id === "default").stages.find(s => s.label === "Contract sent").id;
+await gateway.hubspot.dealMoveStage({ dealId: "12345", properties: { dealstage: stage } });
 ```
 
 ## Owners
@@ -197,14 +187,14 @@ Used for assigning records to a specific HubSpot user. Owner IDs are NOT email a
 
 ```javascript
 const r = await gateway.hubspot.ownersList({ limit: 100 });
-const alice = r.results.find(o => o.email === "alice@acme.com");
-// then: properties: { hubspot_owner_id: String(alice.id) }
+const alice = r.results.find(o => o.email === "alice@example.com");
+// then, on a deal or task: properties: { hubspot_owner_id: String(alice.id) }
 ```
 
 ## Pipelines
 
-Lists deal/ticket pipelines and their stages. Stage IDs are required for any
-deal/ticket create/update that touches `dealstage`/`hs_pipeline_stage`.
+Lists deal/ticket pipelines and their stages. `dealstage` and `hs_pipeline_stage`
+hold stage IDs; map them to labels here, and take the target ID from here for `dealMoveStage`.
 
 ```javascript
 const pipes = await gateway.hubspot.pipelinesList({ objectType: "deals" });
@@ -215,9 +205,6 @@ for (const p of pipes.results) {
 ```
 
 ## Associations (v4)
-
-Linking a contact to a company, a deal to a contact, etc. Use the v4 endpoints —
-v3 is deprecated for new work.
 
 **Read existing associations:**
 
@@ -230,20 +217,8 @@ const r = await gateway.hubspot.associationsGet({
 for (const a of r.results) console.log(`Linked to company ${a.toObjectId}`);
 ```
 
-**Create a default association** (HubSpot picks the standard relationship type):
-
-```javascript
-await gateway.hubspot.associationsCreateDefault({
-  fromObjectType: "contacts",
-  fromObjectId: "12345",
-  toObjectType: "companies",
-  toObjectId: "67890",
-});
-```
-
-For non-default association types (e.g. a custom "Decision Maker" link), pass
-`associationTypes: [{ associationCategory: "USER_DEFINED", associationTypeId: 42 }]`
-to `associationsCreate` (advanced — rarely needed in chat).
+`associationsCreateDefault` attaches a note or a task to a record (see Writing). It does not link
+contacts, companies or deals to each other.
 
 ## Pitfalls
 

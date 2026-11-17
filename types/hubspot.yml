@@ -216,7 +216,7 @@
   properties:
     hs_object_id: { description: "HubSpot object id — identity of the deal.", metadata: { identity: "true" } }
     dealname: "The deal's name."
-    dealstage: "Stage ID within its pipeline (e.g. 'qualifiedtobuy', 'closedwon'). Changed only through the sensitive moveDealStage operation."
+    dealstage: "Stage ID within its pipeline (e.g. 'qualifiedtobuy', 'closedwon'). Changed only through the sensitive dealMoveStage operation."
     pipeline: "Pipeline ID ('default' is the standard sales pipeline)."
     closedate: "ISO-8601 expected close date while open; the actual close date once closed. A past closedate on an OPEN deal means the deal is slipping."
     amount: "Deal value as a string number, in the portal's currency."

@@ -4,10 +4,13 @@
 # URL (the old `api-catalog-public/v1/apis/...` endpoints all 404 as of
 # 2026). The community-maintained alternatives drift from upstream.
 #
-# Strategy: hand-curated mini-spec covering the ~12 CRM ops that handle
-# 95% of chat-driven workflows. Generalised over object type
-# (`contacts | companies | deals | tickets`) so the surface stays small
-# while coverage stays wide.
+# Strategy: hand-curated mini-spec. The reads are generalised over object
+# type (`contacts | companies | deals | tickets | notes | tasks | …`) so the
+# surface stays small while coverage stays wide. The writes are narrow, one
+# operation per thing a user may change, each declared with
+# `x-embabel-effect` in the spec: nothing deletes, nothing creates or
+# updates a contact or company, and a deal's stage moves only through the
+# sensitive `dealMoveStage`.
 #
 # Auth: OAuth2 against a HubSpot Public App registered ONCE per
 # assistant deployment. Client credentials live in the deployment's
@@ -22,6 +25,23 @@
 - url: hubspot-crm.json
   name: hubspot
   type: openapi
+  # Every other operation of the spec is hidden. objectsSearch is a POST
+  # that only reads: unlisted in write-operation-ids, it counts as a read.
+  operation-ids:
+    - objectsList
+    - objectsGet
+    - objectsSearch
+    - ownersList
+    - ownersGet
+    - pipelinesList
+    - pipelinesListStages
+    - associationsGet
+  write-operation-ids:
+    - notesCreate
+    - tasksCreate
+    - associationsCreateDefault
+    - dealUpdate
+    - dealMoveStage
   auth: oauth2
   oauth2:
     auth-url: https://app.hubspot.com/oauth/authorize
