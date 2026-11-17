@@ -14,9 +14,9 @@ are written with their associations and owners.
 It follows the realm spec's rules for seeds:
 - It refuses to run blind. The token's portal must equal --portal, and nothing is written
   without --yes. Without --yes it only reads and prints what it would do.
-- It is idempotent. Every record carries `book_source_id`, a unique property this loader
+- It is idempotent. Every record carries `book_row_id`, a unique property this loader
   creates, and is upserted on it, so a second run updates in place.
-- Its records are recognizable: --remove deletes everything carrying `book_source_id`.
+- Its records are recognizable: --remove deletes everything carrying `book_row_id`.
 
 HubSpot cannot backdate a contact's or company's creation, so history is carried by time
 instead: every date moves forward by (today - the book's as_of), so the book's "now" lands
@@ -40,7 +40,7 @@ from collections import Counter
 from pathlib import Path
 
 API = "https://api.hubapi.com"
-MARK = "book_source_id"
+MARK = "book_row_id"
 ENGAGEMENTS = ["notes", "calls", "emails", "meetings", "tasks"]
 OBJECTS = ["companies", "contacts", "deals", "tickets"] + ENGAGEMENTS
 GROUP = {"companies": "companyinformation", "contacts": "contactinformation",
@@ -109,7 +109,7 @@ def shift_text(text, shift, year):
 
 
 def plan(book, shift, owner, option, stage, ticket_stage):
-    """Every record and association the book becomes, keyed by book_source_id. Pure: the portal
+    """Every record and association the book becomes, keyed by book_row_id. Pure: the portal
     lookups come in as functions, so --self-check runs it offline."""
     rec = {o: {} for o in OBJECTS}
     year = book_as_of(book).year
@@ -325,6 +325,10 @@ class Portal:
 def ensure_property(hs, obj, name, label, description, unique=False):
     if hs.call("GET", f"/crm/v3/properties/{obj}/{name}", missing_ok=True):
         return False
+    gone = hs.call("GET", f"/crm/v3/properties/{obj}/{name}?archived=true", missing_ok=True)
+    if gone and gone.get("hasUniqueValue") != unique:  # HubSpot revives an archived name but never changes its uniqueness
+        sys.exit(f"{obj} has an archived property {name} with hasUniqueValue={gone.get('hasUniqueValue')}; "
+                 f"HubSpot will not recreate it as {unique}. Use another name or restore it by hand.")
     hs.call("POST", f"/crm/v3/properties/{obj}", {
         "name": name, "label": label, "type": "string", "fieldType": "text",
         "groupName": GROUP.get(obj, "engagement"), "hasUniqueValue": unique, "description": description})
@@ -332,7 +336,7 @@ def ensure_property(hs, obj, name, label, description, unique=False):
 
 
 def upsert(hs, obj, records):
-    """Upsert on book_source_id; returns {sid: HubSpot id}."""
+    """Upsert on book_row_id; returns {sid: HubSpot id}."""
     ids, items = {}, list(records.items())
     for i in range(0, len(items), 100):
         chunk = items[i:i + 100]
@@ -442,7 +446,7 @@ def main():
     ap.add_argument("--portal", type=int, help="the portal id the token must belong to")
     ap.add_argument("--today", type=dt.date.fromisoformat, default=dt.date.today(), help="the day the book's as_of lands on")
     ap.add_argument("--manifest", type=Path, default=Path(__file__).with_name("seeded.json"))
-    ap.add_argument("--remove", action="store_true", help="delete every record carrying book_source_id")
+    ap.add_argument("--remove", action="store_true", help="delete every record carrying book_row_id")
     ap.add_argument("--yes", action="store_true", help="write; without it the loader only reads and plans")
     ap.add_argument("--self-check", action="store_true", help="plan offline and assert, touching no portal")
     args = ap.parse_args()
@@ -462,7 +466,7 @@ def main():
         if args.yes:
             for o, v in seeded.items():
                 hs.archive(o, v)
-        return print("left in place: the book_source_id and book_industry properties, any pipeline the load created,\n"
+        return print("left in place: the book_row_id and book_industry properties, any pipeline the load created,\n"
                      "  and the owners; HubSpot's deleted sample records stay in its recycle bin.")
     samples = {o: [r["id"] for r in hs.search(o, [{"propertyName": "hs_object_source_id", "operator": "EQ", "value": "sample-contact"}])]
                for o in OBJECTS}
@@ -483,7 +487,7 @@ def main():
         return print("plan only; re-run with --yes to write")
     # Configuration first: if the key lacks a schema scope, nothing has been deleted yet.
     for o in OBJECTS:
-        ensure_property(hs, o, MARK, "Book source id", "Row id in the sample business book this record was loaded from.", unique=True)
+        ensure_property(hs, o, MARK, "Book row id", "Row id in the sample business book this record was loaded from.", unique=True)
     # HubSpot's industry list is fixed and misses much of the book's wording, so the book's own word rides along.
     ensure_property(hs, "companies", "book_industry", "Book industry", "The industry as the sample business book words it.")
     for p in new_pipelines:
