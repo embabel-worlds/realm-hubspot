@@ -31,6 +31,7 @@ import io
 import json
 import os
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -380,7 +381,7 @@ def self_check(book):
                      stage=lambda p, s: (p, None), ticket_stage=lambda s: {})
     assert any(g.startswith("deals.dealstage") for g in bad), "an unmatched deal stage went unreported"
 
-    stale = Path(os.environ.get("TMPDIR", "/tmp")) / f"load_book-selfcheck-{os.getpid()}.json"
+    stale = Path(tempfile.gettempdir()) / f"load_book-selfcheck-{os.getpid()}.json"
     stale.write_text(json.dumps({"portal": 111, "ids": {"contacts": {"101": "123"}}}))
     try:
         with_manifest({}, stale, 222)
