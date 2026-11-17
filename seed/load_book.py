@@ -341,6 +341,16 @@ def poll(hs, obj, ids, expected, limit=180):
         time.sleep(15)
 
 
+def with_manifest(seeded, manifest, portal_id):
+    """Add a previous load's ids (search is not read-your-writes), but only a manifest of this very portal."""
+    if not manifest.exists():
+        return seeded
+    m = json.loads(manifest.read_text())
+    if m.get("portal") != portal_id:
+        sys.exit(f"{manifest} records portal {m.get('portal')}, not {portal_id}; refusing to delete by its ids")
+    return {o: sorted(set(seeded.get(o, [])) | set(m["ids"].get(o, {}).values())) for o in set(seeded) | set(m["ids"])}
+
+
 def summary(rec, links, gaps):
     print("records: " + ", ".join(f"{len(rec[o])} {o}" for o in OBJECTS) + f"; associations: {len(links)}")
     for g, n in sorted(gaps.items()):
@@ -369,6 +379,16 @@ def self_check(book):
     _, _, bad = plan(book, shift, owner=lambda n: "1", option=lambda o, p, t: t,
                      stage=lambda p, s: (p, None), ticket_stage=lambda s: {})
     assert any(g.startswith("deals.dealstage") for g in bad), "an unmatched deal stage went unreported"
+
+    stale = Path(os.environ.get("TMPDIR", "/tmp")) / f"load_book-selfcheck-{os.getpid()}.json"
+    stale.write_text(json.dumps({"portal": 111, "ids": {"contacts": {"101": "123"}}}))
+    try:
+        with_manifest({}, stale, 222)
+        raise AssertionError("another portal's manifest was trusted for deletion")
+    except SystemExit:
+        pass
+    assert with_manifest({"contacts": ["9"]}, stale, 111) == {"contacts": ["123", "9"]}
+    stale.unlink()
 
     class PartlyRefused(io.BytesIO):  # a batch answer: HTTP 2xx carrying per-item errors
         pass
@@ -405,9 +425,7 @@ def main():
     seeded = {o: [r["id"] for r in hs.search(o, [{"propertyName": MARK, "operator": "HAS_PROPERTY"}])]
               for o in OBJECTS if hs.call("GET", f"/crm/v3/properties/{o}/{MARK}", missing_ok=True)}
     if args.remove:
-        if args.manifest.exists():  # search is not read-your-writes; the manifest catches rows written moments ago
-            for o, m in json.loads(args.manifest.read_text())["ids"].items():
-                seeded[o] = sorted(set(seeded.get(o, [])) | set(m.values()))
+        seeded = with_manifest(seeded, args.manifest, portal_id)
         print("would remove" if not args.yes else "removing", ", ".join(f"{len(v)} {o}" for o, v in seeded.items()) or "nothing")
         if args.yes:
             for o, v in seeded.items():
