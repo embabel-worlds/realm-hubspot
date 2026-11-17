@@ -15,9 +15,9 @@
 # HubSpot allows five search calls a second per portal, so every search producer shares one
 # `hubspot-search` bucket paced at four a second; a traversal over 40 contacts waits rather than
 # being refused with a 429.
-# shortcut: a PER-KEY traversal (activities by contact) gets at most about 220 keys, the host's
-# five converge windows of 40, before the engine answers UNSOLVABLE with rewrite advice; an owner
-# with more contacts needs a narrower question or a batch association read the realm lacks today.
+# shortcut: a PER-KEY traversal (activities by contact) makes one search per contact, so 400
+# contacts take about 100 seconds and may hit the host's call budget or a client timeout; a batch
+# association read, which the realm lacks today, would make it a few calls.
 
 - name: contactsByEmail
   kind: api
