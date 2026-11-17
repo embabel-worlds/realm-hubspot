@@ -22,23 +22,6 @@
 - url: hubspot-crm.json
   name: hubspot
   type: openapi
-  auth: oauth2
-  oauth2:
-    auth-url: https://app.hubspot.com/oauth/authorize
-    token-url: https://api.hubapi.com/oauth/v1/token
-    scopes: >-
-      crm.objects.contacts.read crm.objects.contacts.write
-      crm.objects.companies.read crm.objects.companies.write
-      crm.objects.deals.read crm.objects.deals.write
-      crm.objects.owners.read tickets
-    identity:
-      url: https://api.hubapi.com/oauth/v1/access-tokens/{token}
-      method: GET
-      auth: path-token
-      account-id-field: hub_id
-      display-name-field: hub_domain
-    # Tells the OAuth callback to register the resolved hub_id as a
-    # webhook tenant key. An inbound HubSpot webhook carrying the same
-    # portalId is then routed back to this user without re-authentication.
-    webhook-tenancy:
-      store: hubspot-portal-id
+  # A/B substitute arm only: OAuth swapped for the service-key bearer, nothing else changed.
+  auth: bearer
+  token-env: HUBSPOT_SERVICE_KEY
