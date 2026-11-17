@@ -113,6 +113,11 @@ npm run typecheck && npm test && npm run build   # build writes dist/, which is 
 
 `@embabel/runtime-types` resolves from a sibling `me` checkout (`../../me/tooling/runtime-types`).
 
+`sh tests/verify.sh` checks the realm against a live portal and a running Me, read-only: the
+stalled, slipping, gone-quiet, past-due and open-ticket sets through the producers must equal
+HubSpot's own, and the served write surface must equal `apis/apis.yml`. Its header lists the
+environment it needs.
+
 ## Not in this realm
 
 Marketing emails, forms, CMS, files, property metadata, webhooks, and any write beyond the
