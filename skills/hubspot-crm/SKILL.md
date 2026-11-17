@@ -39,26 +39,22 @@ own day's cut-off. In the queries below, `<today>` stands for today's date as `Y
 ## Through the knowledge graph
 
 Every HubSpot record type is virtual: a Cypher query that traverses to it fetches it live.
-A bare `MATCH (o:HubSpotOwner)` matches nothing, so it never means "no such owner".
 
-**A colleague by name** ("Dana's deals", "Jenna's contacts"): look the owner up with `ownersList`,
-then pin their id in the query. `Person -[:HAS_HUBSPOT_OWNER]->` reaches an owner only when that
-person's email is the owner's login email.
-
-```javascript
-const owners = (await gateway.hubspot.ownersList({ limit: 100 })).results;
-const dana = owners.find(o => `${o.firstName} ${o.lastName}`.toLowerCase().includes("dana"));
-console.log(dana.id);   // use it as <ownerId> below
-```
+**A colleague by name** ("Dana's deals", "Jenna's contacts"): HubSpot owners are CRM users, not
+people in the graph, so match the owner by name. A bare `MATCH (o:HubSpotOwner)` sweeps the
+portal's owners. `Person -[:HAS_HUBSPOT_OWNER]->` reaches an owner only when that person's email
+is the owner's login email.
 
 ```cypher
 // Dana's stalled deals: open, nobody reached in 45 days
-MATCH (:HubSpotOwner {id:'<ownerId>'})-[:OWNS_DEAL]->(d:HubSpotDeal)
+MATCH (o:HubSpotOwner) WHERE toLower(o.firstName) = 'dana'
+MATCH (o)-[:OWNS_DEAL]->(d:HubSpotDeal)
 WHERE d.hs_is_closed = 'false' AND substring(d.notes_last_contacted, 0, 10) <= '<today-45d>'
 RETURN d.dealname, d.dealstage, d.closedate, d.notes_last_contacted
 
 // Dana's contacts we haven't emailed in 30 days: one query, never a loop of calls per contact
-MATCH (:HubSpotOwner {id:'<ownerId>'})-[:OWNS_CONTACT]->(c:HubSpotContact)
+MATCH (o:HubSpotOwner) WHERE toLower(o.firstName) = 'dana'
+MATCH (o)-[:OWNS_CONTACT]->(c:HubSpotContact)
 OPTIONAL MATCH (c)-[:HAS_ACTIVITY]->(e:HubSpotEmail) WHERE e.hs_email_direction = 'EMAIL'
 WITH c, max(e.hs_timestamp) AS lastSent
 WHERE lastSent IS NULL OR substring(lastSent, 0, 10) < '<today-30d>'
@@ -79,7 +75,7 @@ RETURN t.subject, t.hs_ticket_priority, t.createdate
 |---|---|---|
 | `AssistantUser`, `Person` | `HAS_HUBSPOT_OWNER` | `HubSpotOwner` |
 | `HubSpotOwner` | `OWNS_CONTACT`, `OWNS_DEAL`, `OWNS_TICKET`, `OWNS_ACTIVITY` | contacts, deals, tickets, activities |
-| `HubSpotBook {scope:'all'}` | `HAS_COMPANY`, `HAS_DEAL` | every company, every deal |
+| `HubSpotBook {scope:'all'}` | `HAS_COMPANY`, `HAS_DEAL`, `HAS_OWNER` | every company, deal or owner |
 | `HubSpotCompany` | `HAS_CONTACT`, `HAS_DEAL`, `HAS_TICKET` | by the record's PRIMARY company |
 | `HubSpotContact` | `HAS_PRIMARY_COMPANY`, `HAS_DEAL`, `HAS_TICKET` | |
 | `HubSpotContact`, `HubSpotCompany`, `HubSpotDeal` | `HAS_ACTIVITY` | `HubSpotActivity` (any kind) or a kind: `HubSpotCall`, `HubSpotEmail`, `HubSpotMeeting`, `HubSpotNote`, `HubSpotTask` |

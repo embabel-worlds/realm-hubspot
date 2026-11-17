@@ -6,6 +6,7 @@
 /// <reference types="vite/client" />
 import { describe, it, expect } from "vitest";
 import producersYml from "../producers/hubspot.yml?raw";
+import typesYml from "../types/hubspot.yml?raw";
 
 // shortcut: splits on top-level `- name:` entries, which is all producers/hubspot.yml uses; parse YAML if it nests.
 const producers = producersYml.split(/^- name: /m).slice(1).map((block: string) => ({
@@ -21,5 +22,12 @@ describe("producers/hubspot.yml", () => {
     const unpaced = search.filter((p) => !p.cost || p.cost[1] !== "hubspot-search").map((p) => p.name);
     expect(unpaced).toEqual([]);
     for (const p of search) expect(Number(p.cost![2]) / Number(p.cost![3])).toBeLessThan(5);
+  });
+
+  // Owners are CRM users, not graph people: without a bare-match door, "Mike's contacts" finds no Mike.
+  it("lets a bare MATCH (o:HubSpotOwner) sweep the portal's owners", () => {
+    const owner = typesYml.split(/^- name: /m).find((b: string) => b.startsWith("HubSpotOwner\n")) ?? "";
+    expect(owner).toMatch(/anchorLabel: HubSpotBook, relationship: HAS_OWNER,[^}]*producer: ownersAll, implicitDoor: true/);
+    expect(producers.find((p) => p.name === "ownersAll")).toBeDefined();
   });
 });

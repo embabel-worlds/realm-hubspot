@@ -113,6 +113,18 @@
   paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
   cache: { kind: ttl, seconds: 300 }
 
+# Every owner in the portal, for the book's HAS_OWNER door: owners are found by name, not only by email.
+- name: ownersAll
+  kind: api
+  operation: ownersList
+  records: "$.results[*]"
+  keyTemplate: ""   # unkeyed: the whole collection; the book scope is only echoed
+  echoKeyAs: scopeKey
+  args:
+    limit: 100
+  cost: { bucket: hubspot, rate: 100/10s }
+  cache: { kind: ttl, seconds: 600 }
+
 # Resolve a Person to their HubSpot owner by email. `ownersList` (GET /crm/v3/owners) has no IN
 # filter, so this fetches the portal's owners (a small set — they're CRM users) and the join
 # matches each record's `email` to the queried Person emails.

@@ -15,8 +15,8 @@
   visibility: internal
   description: >-
     The whole HubSpot portal, pinned by the literal scope 'all' — write
-    MATCH (b:HubSpotBook {scope:'all'}) and traverse HAS_COMPANY or HAS_DEAL. The door for
-    questions about every company or every deal. It is not stored and does not need to exist.
+    MATCH (b:HubSpotBook {scope:'all'}) and traverse HAS_COMPANY, HAS_DEAL or HAS_OWNER. The door for
+    questions about every company, every deal or every owner. It is not stored and does not need to exist.
   properties:
     scope: { metadata: { identity: "true", default: "all" } }
 
@@ -149,7 +149,7 @@
 - name: HubSpotOwner
   visibility: internal
   userAnchor: false
-  description: "A HubSpot owner (CRM user/seller), resolved from a Person by email; the anchor for owner-scoped contact, deal, ticket and activity queries."
+  description: "A HubSpot owner (CRM user/seller); the anchor for owner-scoped contact, deal, ticket and activity queries. Find one by name with MATCH (o:HubSpotOwner) WHERE o.lastName = '…', or from a Person by email."
   virtualJoins:
     - anchorLabel: Person
       relationship: HAS_HUBSPOT_OWNER
@@ -171,6 +171,10 @@
         - existingBridge
         - canonicalEmail: { producer: ownersByEmail }
       description: "the CRM owner identity for the CONNECTING USER (me) — anchor 'my …' here as (me:AssistantUser)-[:HAS_HUBSPOT_OWNER]->(:HubSpotOwner)"
+    # implicitDoor: a bare `MATCH (o:HubSpotOwner)` takes THIS door, so a colleague is found by name.
+    - { anchorLabel: HubSpotBook, relationship: HAS_OWNER, keyField: scope,
+        recordKeyField: scopeKey, producer: ownersAll, implicitDoor: true,
+        description: "Every owner (CRM user) in the portal; find a colleague here by firstName / lastName." }
   properties:
     id:
       description: "Owner id (digits) — identity, and the key records filter by (hubspot_owner_id)."
