@@ -336,7 +336,7 @@
       "PrivateAppToken": {
         "type": "http",
         "scheme": "bearer",
-        "description": "HubSpot Private App access token. Create in HubSpot Settings → Integrations → Private Apps. Sent as `Authorization: Bearer pat-na1-...`."
+        "description": "A HubSpot Service Key (Development → Keys → Service keys), sent as `Authorization: Bearer <key>`."
       }
     },
     "parameters": {

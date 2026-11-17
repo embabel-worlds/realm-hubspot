@@ -1,12 +1,3 @@
-- name: HubSpotContactCreated
-  parents: [Signal]
-  description: "A new contact was created in HubSpot — fires on the contact.creation webhook"
-  properties:
-    contactId: "HubSpot contact (object) id"
-    portalId: "HubSpot portal (account) id"
-    subscriptionType: "Webhook subscription type — always 'contact.creation' for this event"
-    changeSource: "How the contact was created (CRM, FORM, IMPORT, INTEGRATION, …)"
-
 # Every type below is VIRTUAL: fetched on demand when a Cypher query traverses to it, materialized
 # for that query, then rolled back. Nothing is mirrored. Producers are in producers/hubspot.yml.
 #

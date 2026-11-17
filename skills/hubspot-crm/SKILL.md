@@ -229,4 +229,4 @@ contacts, companies or deals to each other.
 - `dealstage` / `hs_pipeline_stage` need a stage **ID** (e.g. `"appointmentscheduled"`), not the label.
 - Owner ID is a **string**, even though it looks numeric. Wrap with `String(...)` when assigning.
 - Search returns `{ total, results, paging }`; list returns `{ results, paging }` — no `total` on bare list.
-- Rate limit (Private App): 100 req/10 sec. Don't hammer in tight loops — batch via `objectsSearch` instead.
+- Rate limit: about 100 requests per 10 seconds per key. Don't hammer in tight loops — batch via `objectsSearch` instead.

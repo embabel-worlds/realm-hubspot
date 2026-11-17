@@ -1,4 +1,4 @@
-# HubSpot CRM v3 — vendored OpenAPI spec, OAuth2-authenticated.
+# HubSpot CRM v3 — vendored OpenAPI spec, Service Key (bearer) authenticated.
 #
 # HubSpot no longer publishes per-API OpenAPI specs at a stable public
 # URL (the old `api-catalog-public/v1/apis/...` endpoints all 404 as of
@@ -12,16 +12,9 @@
 # updates a contact or company, and a deal's stage moves only through the
 # sensitive `dealMoveStage`.
 #
-# Auth: OAuth2 against a HubSpot Public App registered ONCE per
-# assistant deployment. Client credentials live in the deployment's
-# `application.yml` under `assistant.oauth.apps.hubspot.*` — NEVER in
-# this file (which is checked into the public pack repo) and NEVER in
-# any end user's workspace. End users just click "Authorize" in
-# Settings → Connected Services.
-#
-# The `identity:` block is a HubSpot fact (every install talks to the
-# same introspection endpoint) so it stays here. Same for `auth-url`,
-# `token-url`, `scopes`.
+# Auth: a HubSpot Service Key, sent as a bearer token and declared in
+# ../keys.yml with the scopes it needs. Webhooks need a HubSpot app and are
+# not part of this realm yet (embabel-worlds/realm-hubspot#2, #3).
 - url: hubspot-crm.json
   name: hubspot
   type: openapi
@@ -42,23 +35,5 @@
     - associationsCreateDefault
     - dealUpdate
     - dealMoveStage
-  auth: oauth2
-  oauth2:
-    auth-url: https://app.hubspot.com/oauth/authorize
-    token-url: https://api.hubapi.com/oauth/v1/token
-    scopes: >-
-      crm.objects.contacts.read crm.objects.contacts.write
-      crm.objects.companies.read crm.objects.companies.write
-      crm.objects.deals.read crm.objects.deals.write
-      crm.objects.owners.read tickets
-    identity:
-      url: https://api.hubapi.com/oauth/v1/access-tokens/{token}
-      method: GET
-      auth: path-token
-      account-id-field: hub_id
-      display-name-field: hub_domain
-    # Tells the OAuth callback to register the resolved hub_id as a
-    # webhook tenant key. An inbound HubSpot webhook carrying the same
-    # portalId is then routed back to this user without re-authentication.
-    webhook-tenancy:
-      store: hubspot-portal-id
+  auth: bearer
+  token-env: HUBSPOT_SERVICE_KEY

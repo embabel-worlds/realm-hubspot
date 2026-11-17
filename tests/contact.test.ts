@@ -1,6 +1,6 @@
 /**
  * Tests for the `HubSpotContact` verb class against a MOCKED gateway (no live
- * HubSpot, no OAuth). `entityForTest` builds a real `HubSpotContact` with fields
+ * HubSpot, no key). `entityForTest` builds a real `HubSpotContact` with fields
  * set and the mock gateway injected — what the host does after virtual cypher
  * materializes the contact — so the verb runs unchanged. Pure verbs are asserted
  * by return value; effectful verbs by the `gateway.hubspot.*` ops + args.
