@@ -84,7 +84,7 @@
     createdate: "ISO-8601 timestamp the contact was created in HubSpot (the CRM 'Create Date'). Compare lexically for 'created since X'."
     notes_last_activity_date: "ISO-8601 timestamp of the contact's last activity of ANY kind (email, call, meeting, note, task). Compare lexically for 'no activity since X'."
     hubspot_owner_id: "Owner id (digits) — id-match key to HubSpotOwner; who in the CRM owns this contact."
-    notes_last_contacted: "ISO-8601 timestamp of the last time WE reached the contact: a sent email, a call or a meeting logged. An email the contact sent us does NOT move it. This is what 'last contacted' and 'gone quiet' mean. Compare lexically for 'not contacted since X'."
+    notes_last_contacted: "ISO-8601 timestamp of the last time WE reached the contact: a sent email, a call or a meeting logged. An email the contact sent us does NOT move it. This is what 'last contacted' and 'gone quiet' mean. Compare lexically for 'not contacted since X'. It does NOT answer 'not emailed': a call or meeting moves it too, so for emails read (c)-[:HAS_ACTIVITY]->(e:HubSpotEmail) WHERE e.hs_email_direction = 'EMAIL'."
     notes_next_activity_date: "ISO-8601 timestamp of the next UPCOMING activity scheduled with the contact. Empty when nothing is scheduled ahead — an overdue task does not show here; read the tasks instead."
     hs_last_sales_activity_timestamp: "ISO-8601 timestamp of the last sales activity on the contact."
 
