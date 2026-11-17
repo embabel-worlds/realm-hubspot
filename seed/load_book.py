@@ -113,7 +113,7 @@ def plan(book, shift, owner, option, stage, ticket_stage):
         rel = a["relationship"]
         put("companies", a["source_id"], {
             "name": a["name"], "domain": a["account_key"], "website": a["website"], "phone": a["phone"],
-            "industry": opt("companies", "industry", a["industry"]), "city": a["city"], "state": a["region"],
+            "industry": opt("companies", "industry", a["industry"]), "book_industry": a["industry"], "city": a["city"], "state": a["region"],
             "country": a["country"], "lifecyclestage": opt("companies", "lifecyclestage", LIFECYCLE.get(rel, rel)),
             "annualrevenue": a["annual_revenue"], "numberofemployees": a["employees"], "description": a["note"]},
             a["owner"])
@@ -284,13 +284,12 @@ class Portal:
                         "metadata": {"probability": s["metadata"]["probability"]}} for s in base["stages"]]})
 
 
-def ensure_mark(hs, obj):
-    if hs.call("GET", f"/crm/v3/properties/{obj}/{MARK}", missing_ok=True):
+def ensure_property(hs, obj, name, label, description, unique=False):
+    if hs.call("GET", f"/crm/v3/properties/{obj}/{name}", missing_ok=True):
         return False
     hs.call("POST", f"/crm/v3/properties/{obj}", {
-        "name": MARK, "label": "Book source id", "type": "string", "fieldType": "text",
-        "groupName": GROUP.get(obj, "engagement"), "hasUniqueValue": True,
-        "description": "Row id in the sample business book this record was loaded from."})
+        "name": name, "label": label, "type": "string", "fieldType": "text",
+        "groupName": GROUP.get(obj, "engagement"), "hasUniqueValue": unique, "description": description})
     return True
 
 
@@ -396,7 +395,8 @@ def main():
     print(f"portal {portal_id}; book as_of {book_as_of(args.book)} lands on {args.today} (shift {shift.days} days)")
     print("HubSpot sample records to delete: " + (", ".join(f"{len(v)} {o}" for o, v in samples.items() if v) or "none"))
     print("already seeded: " + (", ".join(f"{len(v)} {o}" for o, v in seeded.items() if v) or "none"))
-    print(f"{MARK} property to create on: " + (", ".join(o for o in OBJECTS if o not in seeded) or "none"))
+    print(f"{MARK} property to create on: " + (", ".join(o for o in OBJECTS if o not in seeded) or "none")
+          + "; book_industry on companies, if missing")
     print("deal pipelines to create (default stages): " + (", ".join(new_pipelines) or "none"))
     if not args.yes:
         rec, links, gaps = plan(args.book, shift, ctx.owners.get, ctx.option, ctx.stage, ctx.ticket_stage)
@@ -407,7 +407,9 @@ def main():
     for o, v in samples.items():
         hs.archive(o, v)
     for o in OBJECTS:
-        ensure_mark(hs, o)
+        ensure_property(hs, o, MARK, "Book source id", "Row id in the sample business book this record was loaded from.", unique=True)
+    # HubSpot's industry list is fixed and misses much of the book's wording, so the book's own word rides along.
+    ensure_property(hs, "companies", "book_industry", "Book industry", "The industry as the sample business book words it.")
     for p in new_pipelines:
         ctx.create_pipeline(p)
     ctx.read_pipelines()
