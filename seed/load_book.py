@@ -30,6 +30,7 @@ import datetime as dt
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 import time
@@ -81,10 +82,37 @@ def ms(when, shift):
     return str(int((t + shift).timestamp() * 1000))
 
 
+MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September",
+          "October", "November", "December"]
+NAMES = sorted({n for f in MONTHS for n in (f, f[:3])} | {"Sept"}, key=len, reverse=True)
+DATES = re.compile(r"\b(\d{4})-(\d\d)-(\d\d)\b|\b(" + "|".join(NAMES) + r")(\.?) (\d{1,2})(st|nd|rd|th)?\b")
+TEXT = {"hs_email_subject", "hs_email_text", "hs_call_title", "hs_call_body", "hs_note_body", "hs_task_subject",
+        "hs_task_body", "hs_meeting_title", "description", "subject", "content"}
+
+
+def shift_text(text, shift, year):
+    """Move dates written inside a text by `shift`, as the structured dates move, keeping each one's spelling style.
+    shortcut: a month-day without a year is read in the book's year, and weekday words are left as they are."""
+    def move(m):
+        if m.group(1):
+            return (dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3))) + shift).isoformat()
+        name, dot, day, suffix = m.group(4), m.group(5), int(m.group(6)), m.group(7)
+        full = next(f for f in MONTHS if f.startswith(name[:3]))
+        try:
+            d = dt.date(year, MONTHS.index(full) + 1, day) + shift
+        except ValueError:
+            return m.group(0)
+        month = MONTHS[d.month - 1] if name == full else MONTHS[d.month - 1][:3]
+        sfx = "" if not suffix else "th" if 10 < d.day % 100 < 14 else {1: "st", 2: "nd", 3: "rd"}.get(d.day % 10, "th")
+        return f"{month}{dot} {d.day}{sfx}"
+    return DATES.sub(move, text) if isinstance(text, str) else text
+
+
 def plan(book, shift, owner, option, stage, ticket_stage):
     """Every record and association the book becomes, keyed by book_source_id. Pure: the portal
     lookups come in as functions, so --self-check runs it offline."""
     rec = {o: {} for o in OBJECTS}
+    year = book_as_of(book).year
     links, gaps = [], Counter()
     accounts, contacts = rows(book, "crm/accounts.csv"), rows(book, "crm/contacts.csv")
     deals, cases = rows(book, "crm/opportunities.csv"), rows(book, "support/cases.csv")
@@ -96,7 +124,8 @@ def plan(book, shift, owner, option, stage, ticket_stage):
         if owner_name is not None:
             props["hubspot_owner_id"] = owner(owner_name)
             gaps[f"owner not in portal: {owner_name}"] += props["hubspot_owner_id"] is None
-        rec[obj][sid] = {k: v for k, v in props.items() if v not in (None, "")}
+        rec[obj][sid] = {k: shift_text(v, shift, year) if k in TEXT else v
+                         for k, v in props.items() if v not in (None, "")}
 
     def link(obj, sid, account_key=None, email=None, opportunity=None):
         for to, key, ids in (("companies", account_key, company), ("contacts", email, person),
@@ -369,6 +398,8 @@ def self_check(book):
     assert dt.datetime.fromtimestamp(int(ms("2026-06-27", shift)) / 1000, dt.timezone.utc).date() == dt.date(2026, 11, 17)
     assert ms("2026-06-27T10:00:00", shift) == ms("2026-06-27 10:00:00", shift) == ms("2026-06-27T12:00:00+02:00", shift)
     assert all(sid in rec[o] and tid in rec[t] for o, sid, t, tid in links)
+    assert shift_text("presentation on June 30, call Mar. 3rd, due 2026-06-24; May we?", shift, 2026) == \
+        "presentation on November 20, call Jul. 24th, due 2026-11-14; May we?"
     assert all(p[MARK] == sid for o in OBJECTS for sid, p in rec[o].items())
     assert not gaps, gaps
     assert match([("Left voicemail", "v"), ("No answer", "n")], "voicemail") == "v"
