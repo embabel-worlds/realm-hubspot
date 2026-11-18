@@ -67,6 +67,13 @@ describe("producers/hubspot.yml", () => {
     }
   });
 
+  // An amount without its currency reads as a bare number, and the answer has to guess or disown the currency.
+  it("every producer that projects a deal amount projects its currency code with it", () => {
+    const missing = producers.filter((p) => /properties: \[[^\]]*\bamount\b/.test(p.block) && !/\bdeal_currency_code\b/.test(p.block)).map((p) => p.name);
+    expect(producers.filter((p) => /\bamount\b/.test(p.block)).length).toBeGreaterThan(0);
+    expect(missing).toEqual([]);
+  });
+
   // ownersList returns 100 owners a page; an unpaged read misses every later colleague.
   it("walks every page of the owner list", () => {
     for (const name of ["ownersAll", "ownersByEmail"]) {

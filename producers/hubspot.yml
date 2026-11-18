@@ -192,7 +192,7 @@
   keyArg: "filterGroups.0.filters.0.values"
   args:
     objectType: deals
-    properties: [hs_object_id, dealname, dealstage, pipeline, closedate, amount, hubspot_owner_id, notes_last_contacted, notes_last_updated, notes_next_activity_date, hs_lastmodifieddate, hs_is_closed, hs_is_closed_won, hs_primary_associated_company, createdate]
+    properties: [hs_object_id, dealname, dealstage, pipeline, closedate, amount, deal_currency_code, hubspot_owner_id, notes_last_contacted, notes_last_updated, notes_next_activity_date, hs_lastmodifieddate, hs_is_closed, hs_is_closed_won, hs_primary_associated_company, createdate]
     filterGroups:
       - filters:
           - propertyName: hubspot_owner_id
@@ -208,7 +208,7 @@
   keyArg: "filterGroups.0.filters.0.values"
   args:
     objectType: deals
-    properties: [hs_object_id, dealname, dealstage, pipeline, closedate, amount, hubspot_owner_id, notes_last_contacted, notes_last_updated, notes_next_activity_date, hs_lastmodifieddate, hs_is_closed, hs_is_closed_won, hs_primary_associated_company, createdate]
+    properties: [hs_object_id, dealname, dealstage, pipeline, closedate, amount, deal_currency_code, hubspot_owner_id, notes_last_contacted, notes_last_updated, notes_next_activity_date, hs_lastmodifieddate, hs_is_closed, hs_is_closed_won, hs_primary_associated_company, createdate]
     filterGroups:
       - filters:
           - propertyName: hs_primary_associated_company
@@ -225,7 +225,7 @@
   echoKeyAs: contactKey
   args:
     objectType: deals
-    properties: [hs_object_id, dealname, dealstage, pipeline, closedate, amount, hubspot_owner_id, notes_last_contacted, notes_last_updated, notes_next_activity_date, hs_lastmodifieddate, hs_is_closed, hs_is_closed_won, hs_primary_associated_company, createdate]
+    properties: [hs_object_id, dealname, dealstage, pipeline, closedate, amount, deal_currency_code, hubspot_owner_id, notes_last_contacted, notes_last_updated, notes_next_activity_date, hs_lastmodifieddate, hs_is_closed, hs_is_closed_won, hs_primary_associated_company, createdate]
     filterGroups:
       - filters:
           - propertyName: associations.contact
@@ -242,7 +242,7 @@
   echoKeyAs: scopeKey
   args:
     objectType: deals
-    properties: [hs_object_id, dealname, dealstage, pipeline, closedate, amount, hubspot_owner_id, notes_last_contacted, notes_last_updated, notes_next_activity_date, hs_lastmodifieddate, hs_is_closed, hs_is_closed_won, hs_primary_associated_company, createdate]
+    properties: [hs_object_id, dealname, dealstage, pipeline, closedate, amount, deal_currency_code, hubspot_owner_id, notes_last_contacted, notes_last_updated, notes_next_activity_date, hs_lastmodifieddate, hs_is_closed, hs_is_closed_won, hs_primary_associated_company, createdate]
   paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
   cache: { kind: ttl, seconds: 300 }
 
