@@ -63,6 +63,8 @@
         recordKeyField: ticketKey, producer: contactsByTicket,
         description: "the contacts associated with this ticket, such as who raised it" }
   properties:
+    # shortcut: email is the identity, so a contact with no email is skipped on every door (the spec skips a
+    # record missing its identity); key on hs_object_id with `hub: Person` kept on email once a portal has such contacts.
     email:
       description: "Primary email — identity of the contact and the id-match key to Person."
       metadata:

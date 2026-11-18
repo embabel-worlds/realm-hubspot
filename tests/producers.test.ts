@@ -43,8 +43,10 @@ describe("producers/hubspot.yml", () => {
   // A search filtered on an association does not say which anchor a record matched, so the producer must
   // echo the key, and the join must match on that echo; otherwise every record attaches to no anchor.
   it("every join over an association producer matches on the key that producer echoes", () => {
-    const joins = [...typesYml.matchAll(/recordKeyField: (\w+),?\s+producer: (\w+)/g)].map((m) => ({ key: m[1], producer: m[2] }));
-    expect(joins.length).toBeGreaterThan(10);
+    const yml = typesYml.replace(/#.*$/gm, "");
+    const joins = [...yml.matchAll(/recordKeyField: (\w+),?\s+producer: (\w+)/g)].map((m) => ({ key: m[1], producer: m[2] }));
+    // Every join is seen, inline or block form, so a join the pattern misses fails here instead of passing unchecked.
+    expect(joins.length).toBe((yml.match(/recordKeyField:/g) ?? []).length);
     const broken = joins.filter((j) => {
       const block = producers.find((p) => p.name === j.producer)?.block;
       if (block === undefined) return true;

@@ -5,7 +5,7 @@
 # takes an `IN` list of every anchor key at once (`keyArg`), so a traversal over many anchors
 # costs one search per page, not N.
 #
-# PER-KEY where the key is a HubSpot ASSOCIATION (`associations.contact`, `.company`, `.deal`):
+# PER-KEY where the key is a HubSpot ASSOCIATION (`associations.contact`, `.company`, `.deal`, `.ticket`):
 # a search result does not say which associated record it matched, so these ask one key per call
 # and stamp it back with `echoKeyAs`.
 #
@@ -18,6 +18,8 @@
 # shortcut: a PER-KEY traversal (activities by contact) makes one search per contact, so 400
 # contacts take about 100 seconds and may hit the host's call budget or a client timeout; a batch
 # association read, which the realm lacks today, would make it a few calls.
+# The same holds for contacts by deal or ticket: a sweep over every deal makes one search per deal,
+# up to the host's 200-anchor cap, about 50 seconds at four a second.
 
 - name: contactsByEmail
   kind: api
