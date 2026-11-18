@@ -1,0 +1,24 @@
+# The key this realm needs, and how the host checks it (realm-spec: keys.yml).
+#
+# A HubSpot Service Key (Development → Keys → Service keys), sent as a bearer token. Give it only
+# the scopes the realm's operations use:
+#   crm.objects.contacts.read    crm.objects.companies.read   crm.objects.owners.read
+#   crm.objects.deals.read       crm.objects.deals.write      crm.objects.tickets.read
+#   crm.objects.calls.read       crm.objects.emails.read      crm.objects.meetings.read
+#   crm.objects.notes.read       crm.objects.tasks.read
+#   crm.objects.contacts.write   HubSpot defines no notes or tasks write scope (its Create note
+#                                and Create task references list none) and authorises creating
+#                                one by the write scope of the record it belongs to. The realm
+#                                itself declares no operation that changes a contact.
+
+- name: hubspot
+  displayName: HubSpot Service Key
+  description: Reads your HubSpot CRM, and logs notes, tasks and deal changes in it.
+  getKeyUrl: https://developers.hubspot.com/docs/apps/developer-platform/build-apps/authentication/account-service-keys
+  fields:
+    - variable: HUBSPOT_SERVICE_KEY
+      displayName: Service Key
+  validate:
+    api: hubspot
+    operation: ownersList
+    args: { limit: 1 }

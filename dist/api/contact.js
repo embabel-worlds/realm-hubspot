@@ -11,9 +11,8 @@ const DAY_MS = 86_400_000;
  *
  *  - **pure** verbs compute over the node's own scalar fields (name, contact
  *    recency, follow-up need), no I/O.
- *  - **effectful** verbs write back through `this.gateway.hubspot.*`. Property
- *    updates address the contact by `email` (`idProperty`); note/task verbs
- *    resolve the numeric id once, create the object, and associate it.
+ *  - **effectful** verbs log a note or a task through `this.gateway.hubspot.*`:
+ *    they resolve the numeric id once, create the object, and associate it.
  */
 class HubSpotContact extends runtime_types_1.Entity {
     // `id` (the identity key) is inherited from Entity and equals the email.
@@ -49,7 +48,7 @@ class HubSpotContact extends runtime_types_1.Entity {
     needsFollowUp(days = 14, now = Date.now()) {
         return this.isStale(days, now);
     }
-    // ── effectful verbs: write back through gateway.hubspot (the source) ──
+    // ── effectful verbs: log notes and tasks through gateway.hubspot (the source) ──
     /** Resolve the numeric HubSpot object id from this contact's email. */
     async resolveId() {
         const found = await this.api.hubspot.objectsGet({ objectType: "contacts", objectId: this.email, idProperty: "email" });
@@ -57,44 +56,32 @@ class HubSpotContact extends runtime_types_1.Entity {
             throw new Error(`cannot resolve HubSpot contact id for email: ${this.email}`);
         return found.id;
     }
-    /** Update contact properties (addressed by email, no id lookup needed). */
-    async update(properties) {
-        return this.api.hubspot.objectsUpdate({ objectType: "contacts", objectId: this.email, idProperty: "email", properties });
-    }
-    /** Reassign the contact to a different owner (by numeric owner id). */
-    async reassignOwner(ownerId) {
-        return this.update({ hubspot_owner_id: ownerId });
-    }
     /** Log a note against the contact, associated to it. */
     async logNote(body, now = Date.now()) {
         const contactId = await this.resolveId();
-        const note = await this.api.hubspot.objectsCreate({
-            objectType: "notes",
+        const note = await this.api.hubspot.notesCreate({
             properties: { hs_note_body: body, hs_timestamp: new Date(now).toISOString() },
         });
         if (note?.id) {
-            await this.api.hubspot.associationsCreateDefault({
-                fromObjectType: "notes", fromObjectId: note.id, toObjectType: "contacts", toObjectId: contactId,
-            });
+            await this.api.hubspot.notesAssociate({ noteId: note.id, toObjectType: "contacts", toObjectId: contactId });
         }
         return note;
     }
     /** Create a follow-up task on the contact, due at `dueIso` (default: now). */
     async createFollowUpTask(title, dueIso) {
         const contactId = await this.resolveId();
-        const task = await this.api.hubspot.objectsCreate({
-            objectType: "tasks",
+        const task = await this.api.hubspot.tasksCreate({
             properties: {
                 hs_task_subject: title,
+                // The host stamps an agent's write into hs_task_body (the spec's attribution field), as it does hs_note_body.
+                hs_task_body: title,
                 hs_timestamp: dueIso ?? new Date().toISOString(),
                 hs_task_status: "NOT_STARTED",
                 hs_task_type: "TODO",
             },
         });
         if (task?.id) {
-            await this.api.hubspot.associationsCreateDefault({
-                fromObjectType: "tasks", fromObjectId: task.id, toObjectType: "contacts", toObjectId: contactId,
-            });
+            await this.api.hubspot.tasksAssociate({ taskId: task.id, toObjectType: "contacts", toObjectId: contactId });
         }
         return task;
     }

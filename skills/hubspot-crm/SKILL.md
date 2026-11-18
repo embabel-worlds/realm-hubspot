@@ -1,9 +1,94 @@
 ---
 name: hubspot-crm
-description: HubSpot CRM — contacts, companies, deals, tickets, pipelines, owners, associations. Activate BEFORE any HubSpot call; it returns the namespaces and rules to follow.
+description: HubSpot CRM — contacts, companies, deals, tickets, activities (calls, emails, meetings, notes, tasks), pipelines, owners, associations. Activate BEFORE any HubSpot call; it returns the namespaces and rules to follow.
 ---
 
 # HubSpot CRM Workflows
+
+## Asking the right question
+
+HubSpot's date properties answer narrower questions than their names suggest. Pick the one
+that means what the user asked:
+
+| The user asks | Read | Why |
+|---|---|---|
+| "last contacted", "gone quiet", "no touch in 30 days" | `notes_last_contacted` on the contact, company or deal | The last time WE reached them: a sent email, a call, a meeting. An email THEY sent us does not move it (measured on a live portal), and neither does a note. |
+| "not emailed in N days" | the contact's `HubSpotEmail` activities with `hs_email_direction = 'EMAIL'` (sent by us) | `notes_last_contacted` also counts calls and meetings, so it answers a different question. |
+| "past-due follow-ups", "overdue tasks" | `HubSpotTask` with `hs_task_status <> 'COMPLETED'` and `hs_timestamp` before today | A task's `hs_timestamp` is its DUE date. |
+| "what's next", "anything scheduled" | `notes_next_activity_date` | Shows only UPCOMING activity. An overdue task is not in it, so an empty value never means "nothing outstanding". |
+| "any activity at all" | `notes_last_activity_date` | Every kind, inbound and notes included. |
+| "stalled deal" | open deal (`hs_is_closed = 'false'`) whose `notes_last_contacted` is 45 or more days before today | No email, call or meeting from us in 45 days. Not `hs_lastmodifieddate`: HubSpot stamps it at every write, so it says when the record changed, not when anyone talked. |
+| "slipping deal" | open deal whose `closedate` is before today | The close date passed and the deal is still open. |
+| "open tickets" | `HubSpotTicket` with `hs_is_closed = 'false'` | Stage ids differ by pipeline; `hs_is_closed` does not. |
+
+"Today" is the current date, or the date the conversation gives as today. Work cut-offs out from it and compare ISO timestamps lexically,
+and say which date you took as today:
+
+```javascript
+const today = new Date().toISOString().slice(0, 10);                          // "YYYY-MM-DD", unless given
+const daysBefore = (n) => new Date(Date.parse(today) - n * 86_400_000).toISOString().slice(0, 10);
+const dayOf = (iso) => iso.slice(0, 10);                                       // a timestamp's date
+const last = (deal) => deal.properties.notes_last_contacted;                   // absent: never contacted
+const stalled = (deal) => !last(deal) || dayOf(last(deal)) <= daysBefore(45);
+```
+
+Compare a timestamp's date (its first 10 characters) with a cut-off, or a timestamp exceeds its
+own day's cut-off. In the queries below, `<today>` stands for today's date as `YYYY-MM-DD` and
+`<today-45d>` or `<today-30d>` for the date that many days before it.
+
+## Through the knowledge graph
+
+Every HubSpot record type is virtual: a Cypher query that traverses to it fetches it live.
+
+**A colleague by name** ("Dana's deals", "Jenna's contacts"): HubSpot owners are CRM users, not
+people in the graph, so match the owner by name. A bare `MATCH (o:HubSpotOwner)` sweeps the
+portal's owners. `Person -[:HAS_HUBSPOT_OWNER]->` reaches an owner only when that person's email
+is the owner's login email.
+
+```cypher
+// Dana's stalled deals: open, nobody reached in 45 days
+MATCH (o:HubSpotOwner) WHERE toLower(o.firstName) = 'dana'
+MATCH (o)-[:OWNS_DEAL]->(d:HubSpotDeal)
+WHERE d.hs_is_closed = 'false'
+  AND (d.notes_last_contacted IS NULL OR substring(d.notes_last_contacted, 0, 10) <= '<today-45d>')
+RETURN d.dealname, d.dealstage, d.closedate, d.notes_last_contacted
+
+// Dana's contacts we haven't emailed in 30 days: one query, never a loop of calls per contact
+MATCH (o:HubSpotOwner) WHERE toLower(o.firstName) = 'dana'
+MATCH (o)-[:OWNS_CONTACT]->(c:HubSpotContact)
+OPTIONAL MATCH (c)-[:HAS_ACTIVITY]->(e:HubSpotEmail) WHERE e.hs_email_direction = 'EMAIL'
+WITH c, max(e.hs_timestamp) AS lastSent
+WHERE lastSent IS NULL OR substring(lastSent, 0, 10) < '<today-30d>'
+RETURN c.firstname, c.lastname, lastSent
+
+// My past-due follow-ups
+MATCH (me:AssistantUser)-[:HAS_HUBSPOT_OWNER]->(:HubSpotOwner)-[:OWNS_ACTIVITY]->(t:HubSpotTask)
+WHERE t.hs_task_status <> 'COMPLETED' AND t.hs_timestamp < '<today>'
+RETURN t.hs_task_subject, t.hs_timestamp
+
+// An account's open tickets
+MATCH (b:HubSpotBook {scope:'all'})-[:HAS_COMPANY]->(co:HubSpotCompany {name:'Example Co'})-[:HAS_TICKET]->(t:HubSpotTicket)
+WHERE t.hs_is_closed = 'false'
+RETURN t.subject, t.hs_ticket_priority, t.createdate
+```
+
+| From | Edge | To |
+|---|---|---|
+| `AssistantUser`, `Person` | `HAS_HUBSPOT_OWNER` | `HubSpotOwner` |
+| `HubSpotOwner` | `OWNS_CONTACT`, `OWNS_DEAL`, `OWNS_TICKET`, `OWNS_ACTIVITY` | contacts, deals, tickets, activities |
+| `HubSpotBook {scope:'all'}` | `HAS_COMPANY`, `HAS_DEAL`, `HAS_OWNER` | every company, deal or owner |
+| `HubSpotCompany` | `HAS_CONTACT`, `HAS_DEAL`, `HAS_TICKET` | by the record's PRIMARY company |
+| `HubSpotContact` | `HAS_PRIMARY_COMPANY`, `HAS_DEAL`, `HAS_TICKET` | |
+| `HubSpotDeal`, `HubSpotTicket` | `HAS_CONTACT` | the record's own associated contacts, not every contact at its company |
+| `HubSpotContact`, `HubSpotCompany`, `HubSpotDeal` | `HAS_ACTIVITY` | `HubSpotActivity` (any kind) or a kind: `HubSpotCall`, `HubSpotEmail`, `HubSpotMeeting`, `HubSpotNote`, `HubSpotTask` |
+| `CustomerAccount` | `TRACKED_AS` | `HubSpotCompany`, by domain |
+
+`dealstage`, `pipeline` and `hs_pipeline_stage` hold IDs; map them to labels with `pipelinesList`.
+Answer with labels and names, never bare IDs: a stage by its label, an owner (`hubspot_owner_id`) by the
+`HubSpotOwner`'s `firstName` and `lastName` (an owner has no `name` property). Whether a deal or ticket is
+open is `hs_is_closed`, whatever its stage ID looks like.
+Return `deal_currency_code` beside every `amount`, state it, and group sums by it. If it is empty, say
+the currency is not set rather than assuming one; do not say HubSpot has no currency without reading it.
 
 ## Namespace
 
@@ -22,9 +107,9 @@ method — pick from it. Never re-send the same call.
 
 1. **Don't fabricate IDs.** Object IDs, owner IDs, pipeline/stage IDs — every one comes from a tool result.
 2. **`properties` is `Map<String, String>`.** Even numeric fields (`amount`, `hs_object_id`) and dates come back as strings.
-3. **Search before update.** HubSpot has no "lookup by email" endpoint — use `objectsSearch` with a property filter.
+3. **Search before you write.** HubSpot has no "lookup by email" endpoint — use `objectsSearch` with a property filter to find the id.
 4. **Cap pagination.** Default `limit: 100` (the max). For "how many" use `objectsSearch` with `limit: 1` and read `total`.
-5. **Confirm writes with the user.** `objectsCreate`, `objectsUpdate`, `objectsArchive` mutate live CRM data.
+5. **Writes are few and narrow.** You can log a note, create a task, attach either to a record, update a deal's properties, and move a deal's stage. Nothing deletes, and nothing creates or updates a contact or company: say so when asked, rather than looking for a way round.
 
 ## Finding things
 
@@ -44,12 +129,15 @@ console.log(c.properties.email);
 ```javascript
 const r = await gateway.hubspot.objectsSearch({
   objectType: "contacts",
-  filterGroups: [{ filters: [{ propertyName: "email", operator: "EQ", value: "alice@acme.com" }] }],
+  filterGroups: [{ filters: [{ propertyName: "email", operator: "EQ", value: "alice@example.com" }] }],
   properties: ["email", "firstname", "lastname", "hs_object_id"],
   limit: 1,
 });
 const contact = r.results[0];   // undefined if no match
 ```
+
+A name the user gives may be misspelt or partial. When a name filter matches nothing, retry on one
+distinctive word of it before saying the record is absent, and say which record you matched.
 
 **Counting** — `total` is in the search response. Don't list-and-count:
 
@@ -72,7 +160,7 @@ console.log(`Closed-won deals: ${r.total}`);
 const r = await gateway.hubspot.objectsList({
   objectType: "deals",
   limit: 100,
-  properties: ["dealname", "amount", "dealstage", "closedate"],
+  properties: ["dealname", "amount", "deal_currency_code", "dealstage", "closedate"],
   archived: false,
 });
 // r is { results: [...], paging?: { next: { after: "...", link: "..." } } }
@@ -91,51 +179,43 @@ for (let page = 0; page < 5; page++) {                // hard cap
 }
 ```
 
-## Creating
+## Writing
+
+Five writes, nothing else. Each changes live CRM data.
+
+**Log a note, then attach it** to a contact, company, deal or ticket:
 
 ```javascript
-const c = await gateway.hubspot.objectsCreate({
-  objectType: "contacts",
-  properties: {                     // strings only — even numbers/dates
-    email: "alice@acme.com",
-    firstname: "Alice",
-    lastname: "Nguyen",
-    company: "Acme",
-  },
+const note = await gateway.hubspot.notesCreate({
+  properties: { hs_note_body: "Called about the renewal; they want a quote by Friday.", hs_timestamp: new Date().toISOString() },
 });
-console.log(`Created contact ${c.id}`);
+await gateway.hubspot.notesAssociate({ noteId: note.id, toObjectType: "contacts", toObjectId: "12345" });
 ```
 
-For deals, include `pipeline` and `dealstage` — get valid IDs from `pipelinesList`:
+**Create a follow-up task** (`hs_timestamp` is the DUE date; `hs_task_body` is required, so repeat the subject when there is nothing more to say), then attach it with `tasksAssociate`:
+
+```javascript
+const task = await gateway.hubspot.tasksCreate({
+  properties: {
+    hs_task_subject: "Send the renewal quote", hs_task_body: "They asked for it by Friday.",
+    hs_timestamp: new Date(Date.now() + 4 * 86_400_000).toISOString(), hs_task_type: "EMAIL", hubspot_owner_id: "67890",
+  },
+});
+await gateway.hubspot.tasksAssociate({ taskId: task.id, toObjectType: "contacts", toObjectId: "12345" });
+```
+
+**Update a deal's properties** — `dealname`, `amount`, `closedate`, `hubspot_owner_id`, `hs_next_step`, `description`, `hs_priority`, `dealtype`, and no others:
+
+```javascript
+await gateway.hubspot.dealUpdate({ dealId: "12345", properties: { amount: "25000", closedate: "2026-12-15" } });
+```
+
+**Move a deal to another stage** — only through `dealMoveStage`. `dealUpdate` does not take `dealstage` or `pipeline`. A stage move is sensitive: the user is asked to approve every one before it runs, so say what you are about to move and why. Take the stage ID from `pipelinesList`:
 
 ```javascript
 const pipes = await gateway.hubspot.pipelinesList({ objectType: "deals" });
-const sales = pipes.results.find(p => p.label === "Sales Pipeline");
-const newStage = sales.stages.find(s => s.label === "New").id;
-
-await gateway.hubspot.objectsCreate({
-  objectType: "deals",
-  properties: { dealname: "Acme — Q2 expansion", amount: "25000", pipeline: sales.id, dealstage: newStage },
-});
-```
-
-## Updating
-
-```javascript
-await gateway.hubspot.objectsUpdate({
-  objectType: "contacts",
-  objectId: "12345",
-  properties: { phone: "+1-415-555-0199", lifecyclestage: "customer" },
-});
-```
-
-Only the properties you pass are touched. `objectsUpdate` returns the updated object.
-
-## Archiving
-
-```javascript
-await gateway.hubspot.objectsArchive({ objectType: "contacts", objectId: "12345" });
-// 204 No Content. The object is soft-deleted; pass `archived: true` to objectsList to see it.
+const stage = pipes.results.find(p => p.id === "default").stages.find(s => s.label === "Contract sent").id;
+await gateway.hubspot.dealMoveStage({ dealId: "12345", properties: { dealstage: stage } });
 ```
 
 ## Owners
@@ -144,14 +224,14 @@ Used for assigning records to a specific HubSpot user. Owner IDs are NOT email a
 
 ```javascript
 const r = await gateway.hubspot.ownersList({ limit: 100 });
-const alice = r.results.find(o => o.email === "alice@acme.com");
-// then: properties: { hubspot_owner_id: String(alice.id) }
+const alice = r.results.find(o => o.email === "alice@example.com");
+// then, on a deal or task: properties: { hubspot_owner_id: String(alice.id) }
 ```
 
 ## Pipelines
 
-Lists deal/ticket pipelines and their stages. Stage IDs are required for any
-deal/ticket create/update that touches `dealstage`/`hs_pipeline_stage`.
+Lists deal/ticket pipelines and their stages. `dealstage` and `hs_pipeline_stage`
+hold stage IDs; map them to labels here, and take the target ID from here for `dealMoveStage`.
 
 ```javascript
 const pipes = await gateway.hubspot.pipelinesList({ objectType: "deals" });
@@ -162,9 +242,6 @@ for (const p of pipes.results) {
 ```
 
 ## Associations (v4)
-
-Linking a contact to a company, a deal to a contact, etc. Use the v4 endpoints —
-v3 is deprecated for new work.
 
 **Read existing associations:**
 
@@ -177,20 +254,8 @@ const r = await gateway.hubspot.associationsGet({
 for (const a of r.results) console.log(`Linked to company ${a.toObjectId}`);
 ```
 
-**Create a default association** (HubSpot picks the standard relationship type):
-
-```javascript
-await gateway.hubspot.associationsCreateDefault({
-  fromObjectType: "contacts",
-  fromObjectId: "12345",
-  toObjectType: "companies",
-  toObjectId: "67890",
-});
-```
-
-For non-default association types (e.g. a custom "Decision Maker" link), pass
-`associationTypes: [{ associationCategory: "USER_DEFINED", associationTypeId: 42 }]`
-to `associationsCreate` (advanced — rarely needed in chat).
+`notesAssociate` and `tasksAssociate` attach a note or a task to a record (see Writing). Nothing
+links contacts, companies or deals to each other.
 
 ## Pitfalls
 
@@ -201,4 +266,4 @@ to `associationsCreate` (advanced — rarely needed in chat).
 - `dealstage` / `hs_pipeline_stage` need a stage **ID** (e.g. `"appointmentscheduled"`), not the label.
 - Owner ID is a **string**, even though it looks numeric. Wrap with `String(...)` when assigning.
 - Search returns `{ total, results, paging }`; list returns `{ results, paging }` — no `total` on bare list.
-- Rate limit (Private App): 100 req/10 sec. Don't hammer in tight loops — batch via `objectsSearch` instead.
+- Rate limit: about 100 requests per 10 seconds per key. Don't hammer in tight loops — batch via `objectsSearch` instead.
