@@ -121,4 +121,4 @@ environment it needs.
 ## Not in this realm
 
 Marketing emails, forms, CMS, files, property metadata, webhooks, and any write beyond the
-five above.
+five above. Contacts without an email address are also skipped.
