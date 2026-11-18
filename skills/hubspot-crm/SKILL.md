@@ -87,6 +87,8 @@ RETURN t.subject, t.hs_ticket_priority, t.createdate
 Answer with labels and names, never bare IDs: a stage by its label, an owner (`hubspot_owner_id`) by the
 `HubSpotOwner`'s `firstName` and `lastName` (an owner has no `name` property). Whether a deal or ticket is
 open is `hs_is_closed`, whatever its stage ID looks like.
+An amount always has a currency: return `deal_currency_code` beside `amount` and state it
+(group sums by it). Do not say HubSpot has no currency without having read that field.
 
 ## Namespace
 
