@@ -56,6 +56,12 @@
       recordKeyField: associatedcompanyid
       producer: contactsByCompany
       description: "the contacts whose PRIMARY company is this company"
+    - { anchorLabel: HubSpotDeal, relationship: HAS_CONTACT, keyField: hs_object_id,
+        recordKeyField: dealKey, producer: contactsByDeal,
+        description: "the contacts associated with this deal (its own contacts, not every contact at its company)" }
+    - { anchorLabel: HubSpotTicket, relationship: HAS_CONTACT, keyField: hs_object_id,
+        recordKeyField: ticketKey, producer: contactsByTicket,
+        description: "the contacts associated with this ticket, such as who raised it" }
   properties:
     email:
       description: "Primary email — identity of the contact and the id-match key to Person."
@@ -65,6 +71,8 @@
         # person's FULL email set, so any one of the person's addresses resolves to the one Person.
         hub: Person
     hs_object_id: "HubSpot object id of the contact — the key its deals, tickets and activities are found by."
+    dealKey: "Echo of the deal id this contact was fetched under (deal door only)."
+    ticketKey: "Echo of the ticket id this contact was fetched under (ticket door only)."
     firstname: "Given name. HubSpot stores names as firstname/lastname — there is NO single `name` field; build a display name as `firstname + ' ' + lastname`."
     lastname: "Family name. See firstname."
     jobtitle: "Job title."

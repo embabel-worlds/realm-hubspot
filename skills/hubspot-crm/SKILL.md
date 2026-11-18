@@ -79,10 +79,14 @@ RETURN t.subject, t.hs_ticket_priority, t.createdate
 | `HubSpotBook {scope:'all'}` | `HAS_COMPANY`, `HAS_DEAL`, `HAS_OWNER` | every company, deal or owner |
 | `HubSpotCompany` | `HAS_CONTACT`, `HAS_DEAL`, `HAS_TICKET` | by the record's PRIMARY company |
 | `HubSpotContact` | `HAS_PRIMARY_COMPANY`, `HAS_DEAL`, `HAS_TICKET` | |
+| `HubSpotDeal`, `HubSpotTicket` | `HAS_CONTACT` | the record's own associated contacts, not every contact at its company |
 | `HubSpotContact`, `HubSpotCompany`, `HubSpotDeal` | `HAS_ACTIVITY` | `HubSpotActivity` (any kind) or a kind: `HubSpotCall`, `HubSpotEmail`, `HubSpotMeeting`, `HubSpotNote`, `HubSpotTask` |
 | `CustomerAccount` | `TRACKED_AS` | `HubSpotCompany`, by domain |
 
 `dealstage`, `pipeline` and `hs_pipeline_stage` hold IDs; map them to labels with `pipelinesList`.
+Answer with labels and names, never bare IDs: a stage by its label, an owner (`hubspot_owner_id`) by the
+`HubSpotOwner`'s `firstName` and `lastName` (an owner has no `name` property). Whether a deal or ticket is
+open is `hs_is_closed`, whatever its stage ID looks like.
 
 ## Namespace
 

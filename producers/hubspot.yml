@@ -69,6 +69,44 @@
   paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
   cache: { kind: ttl, seconds: 300 }
 
+# The contacts associated with a deal (the deal's own contact association, not its company's contacts):
+# per-key on `associations.deal`, echoed as `dealKey`.
+- name: contactsByDeal
+  kind: api
+  operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  echoKeyAs: dealKey
+  args:
+    objectType: contacts
+    properties: [hs_object_id, email, firstname, lastname, jobtitle, phone, company, associatedcompanyid, createdate, hs_lead_status, notes_last_activity_date, hubspot_owner_id, notes_last_contacted, notes_next_activity_date, hs_last_sales_activity_timestamp]
+    filterGroups:
+      - filters:
+          - propertyName: associations.deal
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
+# The contacts associated with a ticket (the ticket's own contact association, not its company's contacts):
+# per-key on `associations.ticket`, echoed as `ticketKey`.
+- name: contactsByTicket
+  kind: api
+  operation: objectsSearch
+  cost: { bucket: hubspot-search, rate: 40/10s }
+  records: "$.results[*].properties"
+  keyArg: "filterGroups.0.filters.0.values"
+  echoKeyAs: ticketKey
+  args:
+    objectType: contacts
+    properties: [hs_object_id, email, firstname, lastname, jobtitle, phone, company, associatedcompanyid, createdate, hs_lead_status, notes_last_activity_date, hubspot_owner_id, notes_last_contacted, notes_next_activity_date, hs_last_sales_activity_timestamp]
+    filterGroups:
+      - filters:
+          - propertyName: associations.ticket
+            operator: IN
+  paging: { style: cursor, size: 100, maxPages: 10, cursorParam: after, sizeParam: limit, cursorPath: "$.paging.next.after" }
+  cache: { kind: ttl, seconds: 300 }
+
 # hs_object_id is the node identity, so the domain, id and book doors dedupe onto one company.
 - name: companiesByDomain
   kind: api

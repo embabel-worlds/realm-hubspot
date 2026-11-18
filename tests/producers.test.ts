@@ -40,6 +40,31 @@ describe("producers/hubspot.yml", () => {
     expect(owners.properties[field]?.type).toBe("array");
   });
 
+  // A search filtered on an association does not say which anchor a record matched, so the producer must
+  // echo the key, and the join must match on that echo; otherwise every record attaches to no anchor.
+  it("every join over an association producer matches on the key that producer echoes", () => {
+    const joins = [...typesYml.matchAll(/recordKeyField: (\w+),?\s+producer: (\w+)/g)].map((m) => ({ key: m[1], producer: m[2] }));
+    expect(joins.length).toBeGreaterThan(10);
+    const broken = joins.filter((j) => {
+      const block = producers.find((p) => p.name === j.producer)?.block;
+      if (block === undefined) return true;
+      return /propertyName: associations\./.test(block) && block.match(/^ {2}echoKeyAs: (\S+)$/m)?.[1] !== j.key;
+    });
+    expect(broken).toEqual([]);
+  });
+
+  // "Who is on this deal / who raised this ticket" starts from the record, not from its company.
+  it("a deal and a ticket each reach their own associated contacts", () => {
+    const contact = typesYml.split(/^- name: /m).find((b: string) => b.startsWith("HubSpotContact\n")) ?? "";
+    for (const [anchor, assoc] of [["HubSpotDeal", "deal"], ["HubSpotTicket", "ticket"]]) {
+      const join = contact.match(new RegExp(`anchorLabel: ${anchor}, relationship: HAS_CONTACT,[^}]*producer: (\\w+)`));
+      expect(join, anchor).not.toBeNull();
+      const block = producers.find((p) => p.name === join![1])?.block ?? "";
+      expect(block).toMatch(/^ {4}objectType: contacts$/m);
+      expect(block).toMatch(new RegExp(`propertyName: associations\\.${assoc}$`, "m"));
+    }
+  });
+
   // ownersList returns 100 owners a page; an unpaged read misses every later colleague.
   it("walks every page of the owner list", () => {
     for (const name of ["ownersAll", "ownersByEmail"]) {
