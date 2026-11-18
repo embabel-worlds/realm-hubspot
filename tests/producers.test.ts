@@ -17,6 +17,15 @@ const producers = producersYml.split(/^- name: /m).slice(1).map((block: string) 
   block,
 }));
 
+// The fields a producer's `args.properties` projects, flow (`[a, b]`) or block (`- a`) form, comments dropped.
+const projected = (block: string): string[] => {
+  const yml = block.replace(/#.*$/gm, "");
+  const flow = yml.match(/^ {4}properties: \[([^\]]*)\]/m);
+  if (flow) return flow[1].split(",").map((f) => f.trim()).filter(Boolean);
+  const list = yml.match(/^ {4}properties:\s*\n((?: {6}- .*\n?)+)/m);
+  return list ? list[1].split("\n").map((l) => l.replace(/^\s*- /, "").trim()).filter(Boolean) : [];
+};
+
 describe("producers/hubspot.yml", () => {
   it("paces every search producer in one bucket below HubSpot's five a second", () => {
     const search = producers.filter((p) => p.search);
@@ -69,8 +78,9 @@ describe("producers/hubspot.yml", () => {
 
   // An amount without its currency reads as a bare number, and the answer has to guess or disown the currency.
   it("every producer that projects a deal amount projects its currency code with it", () => {
-    const missing = producers.filter((p) => /properties: \[[^\]]*\bamount\b/.test(p.block) && !/\bdeal_currency_code\b/.test(p.block)).map((p) => p.name);
-    expect(producers.filter((p) => /\bamount\b/.test(p.block)).length).toBeGreaterThan(0);
+    const withAmount = producers.filter((p) => projected(p.block).includes("amount"));
+    expect(withAmount.length).toBeGreaterThan(0);
+    const missing = withAmount.filter((p) => !projected(p.block).includes("deal_currency_code")).map((p) => p.name);
     expect(missing).toEqual([]);
   });
 
@@ -84,7 +94,7 @@ describe("producers/hubspot.yml", () => {
       expect(producers.find((p) => p.name === join![2])?.block ?? "").toMatch(/propertyName: hs_object_id/);
       // Every producer of the anchor type projects the key, or the join has nothing to match on.
       const own = producers.filter((p) => new RegExp(`^ {4}objectType: ${producerList}$`, "m").test(p.block));
-      expect(own.filter((p) => !p.block.includes(key)).map((p) => p.name)).toEqual([]);
+      expect(own.filter((p) => !projected(p.block).includes(key)).map((p) => p.name)).toEqual([]);
     }
   });
 
