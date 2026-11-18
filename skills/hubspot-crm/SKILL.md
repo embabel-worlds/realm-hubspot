@@ -134,6 +134,9 @@ const r = await gateway.hubspot.objectsSearch({
 const contact = r.results[0];   // undefined if no match
 ```
 
+A name the user gives may be misspelt or partial. When a name filter matches nothing, retry on one
+distinctive word of it before saying the record is absent, and say which record you matched.
+
 **Counting** — `total` is in the search response. Don't list-and-count:
 
 ```javascript

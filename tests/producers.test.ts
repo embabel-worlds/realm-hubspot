@@ -74,6 +74,20 @@ describe("producers/hubspot.yml", () => {
     expect(missing).toEqual([]);
   });
 
+  // A record that carries its primary company's id reaches that company directly, not by a sweep of every company.
+  it("a deal and a ticket each reach their primary company by the id they carry", () => {
+    const company = typesYml.split(/^- name: /m).find((b: string) => b.startsWith("HubSpotCompany\n")) ?? "";
+    for (const [anchor, key, producerList] of [["HubSpotDeal", "hs_primary_associated_company", "deals"], ["HubSpotTicket", "hs_primary_company_id", "tickets"]]) {
+      const join = company.match(new RegExp(`anchorLabel: ${anchor}, relationship: HAS_PRIMARY_COMPANY, keyField: (\\w+),\\s+recordKeyField: hs_object_id, producer: (\\w+)`));
+      expect(join, anchor).not.toBeNull();
+      expect(join![1]).toBe(key);
+      expect(producers.find((p) => p.name === join![2])?.block ?? "").toMatch(/propertyName: hs_object_id/);
+      // Every producer of the anchor type projects the key, or the join has nothing to match on.
+      const own = producers.filter((p) => new RegExp(`^ {4}objectType: ${producerList}$`, "m").test(p.block));
+      expect(own.filter((p) => !p.block.includes(key)).map((p) => p.name)).toEqual([]);
+    }
+  });
+
   // ownersList returns 100 owners a page; an unpaged read misses every later colleague.
   it("walks every page of the owner list", () => {
     for (const name of ["ownersAll", "ownersByEmail"]) {

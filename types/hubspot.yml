@@ -122,6 +122,12 @@
       recordKeyField: hs_object_id          # company object id (id-match) — gives the company NAME for a contact
       producer: companiesById
       description: "the contact's PRIMARY associated company — use this for a contact's company NAME (co.name), since HubSpotContact.company is usually empty"
+    - { anchorLabel: HubSpotDeal, relationship: HAS_PRIMARY_COMPANY, keyField: hs_primary_associated_company,
+        recordKeyField: hs_object_id, producer: companiesById,
+        description: "the deal's PRIMARY associated company" }
+    - { anchorLabel: HubSpotTicket, relationship: HAS_PRIMARY_COMPANY, keyField: hs_primary_company_id,
+        recordKeyField: hs_object_id, producer: companiesById,
+        description: "the ticket's PRIMARY associated company" }
     # implicitDoor: a bare `MATCH (k:CrmAccount)` or `MATCH (co:HubSpotCompany)` takes THIS door.
     - { anchorLabel: HubSpotBook, relationship: HAS_COMPANY, keyField: scope,
         recordKeyField: scopeKey, producer: companiesAll, maxFanoutTotal: 10000, implicitDoor: true,
@@ -143,7 +149,7 @@
       description: "Primary web domain — the key to the CustomerAccount spine and the id-match key to a canonical Organization. May be empty for companies with no web domain, which then key no account."
       metadata: { canonical: website }
     name: { description: "Company name.", metadata: { canonical: name } }
-    industry: { description: "Industry, in HubSpot's own words.", metadata: { canonical: industry } }
+    industry: { description: "Industry as HubSpot's internal enumeration value, upper snake case such as 'COMPUTER_SOFTWARE' or 'FOOD_BEVERAGES', not the label HubSpot shows; match a user's wording against the code (e.g. toUpper(c.industry) CONTAINS 'FOOD').", metadata: { canonical: industry } }
     website: "Company website."
     hubspot_owner_id: "Owner id (digits) of the company's owner."
     notes_last_contacted: "ISO-8601 timestamp of the last time WE reached anyone at the company (sent email, call, meeting). Inbound email does not move it."
