@@ -87,8 +87,8 @@ RETURN t.subject, t.hs_ticket_priority, t.createdate
 Answer with labels and names, never bare IDs: a stage by its label, an owner (`hubspot_owner_id`) by the
 `HubSpotOwner`'s `firstName` and `lastName` (an owner has no `name` property). Whether a deal or ticket is
 open is `hs_is_closed`, whatever its stage ID looks like.
-An amount always has a currency: return `deal_currency_code` beside `amount` and state it
-(group sums by it). Do not say HubSpot has no currency without having read that field.
+Return `deal_currency_code` beside every `amount`, state it, and group sums by it. If it is empty, say
+the currency is not set rather than assuming one; do not say HubSpot has no currency without reading it.
 
 ## Namespace
 
@@ -160,7 +160,7 @@ console.log(`Closed-won deals: ${r.total}`);
 const r = await gateway.hubspot.objectsList({
   objectType: "deals",
   limit: 100,
-  properties: ["dealname", "amount", "dealstage", "closedate"],
+  properties: ["dealname", "amount", "deal_currency_code", "dealstage", "closedate"],
   archived: false,
 });
 // r is { results: [...], paging?: { next: { after: "...", link: "..." } } }

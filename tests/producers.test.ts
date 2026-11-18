@@ -7,6 +7,7 @@
 import { describe, it, expect } from "vitest";
 import producersYml from "../producers/hubspot.yml?raw";
 import typesYml from "../types/hubspot.yml?raw";
+import skillMd from "../skills/hubspot-crm/SKILL.md?raw";
 import specText from "../apis/hubspot-crm.json?raw";
 
 // shortcut: splits on top-level `- name:` entries, which is all producers/hubspot.yml uses; parse YAML if it nests.
@@ -82,6 +83,13 @@ describe("producers/hubspot.yml", () => {
     expect(withAmount.length).toBeGreaterThan(0);
     const missing = withAmount.filter((p) => !projected(p.block).includes("deal_currency_code")).map((p) => p.name);
     expect(missing).toEqual([]);
+  });
+
+  // The skill's own examples are copied by the model; one that reads amount bare teaches the bare amount.
+  it("every skill example that reads a deal amount reads its currency code too", () => {
+    const lists = [...skillMd.matchAll(/properties: \[([^\]]*)\]/g)].map((m) => m[1]).filter((l) => /"amount"/.test(l));
+    expect(lists.length).toBeGreaterThan(0);
+    expect(lists.filter((l) => !/"deal_currency_code"/.test(l))).toEqual([]);
   });
 
   // A record that carries its primary company's id reaches that company directly, not by a sweep of every company.
